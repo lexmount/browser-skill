@@ -30,7 +30,7 @@ def _missing_env_vars() -> list[str]:
 
 
 def _json_dump(payload: Dict[str, Any], exit_code: int = 0) -> None:
-    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str))
     raise SystemExit(exit_code)
 
 

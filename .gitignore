@@ -1,2 +1,7 @@
 __pycache__/
 *.pyc
+.env
+dist/
+*.tgz
+INSTALL_FROM_COS.md
+node_modules/

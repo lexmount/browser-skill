@@ -1,0 +1,27 @@
+{
+  "name": "@lexmount/browser-skill-installer",
+  "version": "0.1.0",
+  "description": "Installer for the Lexmount Codex browser skill",
+  "type": "module",
+  "bin": {
+    "lexmount-browser-skill-install": "./tools/install-skill.mjs"
+  },
+  "keywords": [
+    "codex",
+    "skill",
+    "lexmount",
+    "browser"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "cos-nodejs-sdk-v5": "^2.15.4",
+    "dotenv": "^17.2.3"
+  },
+  "files": [
+    "SKILL.md",
+    "REFERENCE.md",
+    "README.md",
+    "scripts",
+    "tools"
+  ]
+}
