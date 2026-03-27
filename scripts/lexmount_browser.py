@@ -113,15 +113,18 @@ def cmd_prepare(args: argparse.Namespace) -> None:
         context_id = args.context_id
         created_context = False
 
-        if not context_id:
+        if args.create_context and not context_id:
             context = client.contexts.create(metadata={"created_by": "codex-browser-skill"})
             context_id = context.id
             created_context = True
 
-        session = client.sessions.create(
-            browser_mode=args.browser_mode,
-            context={"id": context_id, "mode": args.context_mode},
-        )
+        session_kwargs = {
+            "browser_mode": args.browser_mode,
+        }
+        if context_id:
+            session_kwargs["context"] = {"id": context_id, "mode": args.context_mode}
+
+        session = client.sessions.create(**session_kwargs)
 
         _json_dump(
             {
@@ -243,6 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     prepare = subparsers.add_parser("prepare", help="Create or reuse a context, then create a session")
     prepare.add_argument("--context-id", help="Reuse an existing context")
+    prepare.add_argument("--create-context", action="store_true", help="Create a new context before creating the session")
     prepare.add_argument("--context-mode", default="read_write", type=_normalize_context_mode)
     prepare.add_argument("--browser-mode", default="normal", type=_normalize_browser_mode)
     prepare.set_defaults(func=cmd_prepare)

@@ -65,14 +65,16 @@ This returns JSON with:
 ## Preferred workflow
 
 1. Prefer the local SDK path in this repository instead of hand-writing HTTP requests.
-2. Use `prepare` to create a context when the user needs an isolated persistent browser profile.
-3. Pass `--context-id` when the user wants to reuse an existing context.
-4. Use `close-session --session-id <id>` when cleanup is needed.
-5. Only use `direct-url` when the user explicitly wants the quick shared-browser connection method from `wss://.../connection`.
+2. `prepare` does not create a context by default.
+3. Pass `--create-context` only when the user explicitly needs a new persistent browser profile.
+4. Pass `--context-id` when the user wants to reuse an existing context.
+5. Use `close-session --session-id <id>` when cleanup is needed.
+6. Only use `direct-url` when the user explicitly wants the quick shared-browser connection method from `wss://.../connection`.
 
 ## Commands
 
 - `lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare`
+- `lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare --create-context`
 - `lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare --context-id <id>`
 - `lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py list-contexts`
 - `lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py close-session --session-id <id>`
@@ -83,6 +85,7 @@ This returns JSON with:
 - Prefer `prepare` over `direct-url`.
 - Default session browser mode is `normal`.
 - Default context mode is `read_write`.
+- `prepare` creates a plain session by default and does not allocate a context unless `--create-context` or `--context-id` is provided.
 - Return structured JSON to the caller instead of prose when using the helper script.
 - If the SDK import fails, tell the user that `lexmount-python-sdk` or its Python dependencies are not ready in the current environment.
 - If credentials are missing, report which environment variable is absent.

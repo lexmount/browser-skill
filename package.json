@@ -13,6 +13,9 @@
     "browser"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "cos-nodejs-sdk-v5": "^2.15.4",
     "dotenv": "^17.2.3"

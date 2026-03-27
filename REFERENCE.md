@@ -20,8 +20,8 @@ Preferred mode.
 
 Flow:
 
-1. Create or reuse a context
-2. Create a session bound to that context
+1. Create a plain session by default
+2. Only create or reuse a context when persistence is explicitly needed
 3. Read `connect_url` from the returned session object
 4. Connect with Playwright `chromium.connect_over_cdp(connect_url)`
 
@@ -29,6 +29,7 @@ Flow:
 
 ```bash
 lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare
+lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare --create-context
 lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py list-contexts
 lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py close-session --session-id <id>
 lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py direct-url
