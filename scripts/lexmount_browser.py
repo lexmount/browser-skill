@@ -14,6 +14,15 @@ from typing import TYPE_CHECKING, Any, Dict
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 SDK_SRC = REPO_ROOT / "lexmount-python-sdk" / "src"
+SKILL_ENV = SCRIPT_DIR.parent / ".env"
+
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional convenience only
+    load_dotenv = None
+
+if load_dotenv and SKILL_ENV.exists():
+    load_dotenv(SKILL_ENV, override=False)
 
 if SDK_SRC.exists():
     sys.path.insert(0, str(SDK_SRC))
