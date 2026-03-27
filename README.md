@@ -10,6 +10,30 @@ Main entry:
 The implementation prefers the local `lexmount-python-sdk` in this workspace and
 supports the direct shared-browser websocket form as a fallback.
 
+## Runtime commands
+
+After installation into `~/.codex/skills/lexmount-browser`, use:
+
+```bash
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare
+```
+
+Other common commands:
+
+```bash
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare --create-context
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare --context-id <id>
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py list-contexts
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py close-session --session-id <id>
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py direct-url
+```
+
+For repository-local development, you can still use the quickstart virtualenv:
+
+```bash
+lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare
+```
+
 ## Install shape
 
 For local development, install into Codex by linking or copying this folder into:

@@ -28,11 +28,18 @@ Flow:
 ## Helper commands
 
 ```bash
-lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare
-lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare --create-context
-lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py list-contexts
-lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py close-session --session-id <id>
-lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py direct-url
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare --create-context
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare --context-id <id>
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py list-contexts
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py close-session --session-id <id>
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py direct-url
+```
+
+For repository-local development, the equivalent commands can still use:
+
+```bash
+lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py ...
 ```
 
 ## Expected JSON fields
@@ -73,3 +80,5 @@ Only use it for the office test environment:
 ```bash
 export LEXMOUNT_BASE_URL=https://apitest.local.lexmount.net
 ```
+
+The installed skill also reads `~/.codex/skills/lexmount-browser/.env` when present.

@@ -1,7 +1,7 @@
 ---
 name: lexmount-browser
-description: Use when the user wants Codex to create, reuse, or connect to a Lexmount remote browser session, especially through the local Lexmount Python SDK in this workspace. Supports creating contexts, creating browser sessions, returning CDP websocket URLs, listing contexts, and closing sessions. Prefer this skill over hand-written curl requests when working with Lexmount browser automation.
-compatibility: "Requires Python 3. Prefer the existing virtual environment at `lexmount-python-sdk-quickstart/venv` because it already has `httpx` and `python-dotenv`. Authenticated SDK commands require `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`. `LEXMOUNT_BASE_URL` is optional and should be set to `https://apitest.local.lexmount.net` in the office test environment."
+description: Use when the user wants Codex to create, reuse, or connect to a Lexmount remote browser session. Supports creating contexts, creating browser sessions, returning CDP websocket URLs, listing contexts, and closing sessions. Prefer this skill over hand-written curl requests when working with Lexmount browser automation.
+compatibility: "Requires Python 3. Use the installed skill path under `~/.codex/skills/lexmount-browser` by default. If running from this repository during development, prefer `lexmount-python-sdk-quickstart/venv` because it already has `httpx` and `python-dotenv`. Authenticated SDK commands require `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`. `LEXMOUNT_BASE_URL` is optional and should be set to `https://apitest.local.lexmount.net` only in the office test environment."
 allowed-tools: Bash
 ---
 
@@ -11,13 +11,19 @@ Use this skill when the task needs a Lexmount remote browser for automation, deb
 
 ## Setup check
 
-Prefer the existing quickstart virtual environment in this repository:
+For an installed skill, use:
+
+```bash
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py --help
+```
+
+If you are developing from this repository instead of the installed skill, prefer:
 
 ```bash
 lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py --help
 ```
 
-If that environment is unavailable, use any Python environment that can import `httpx` and `dotenv`.
+Use any Python environment that can import `httpx` and `dotenv`.
 
 ## Environment
 
@@ -49,10 +55,10 @@ Only set it for the office test environment:
 
 ## Quick start
 
-Run the helper from the workspace root:
+Run the installed helper:
 
 ```bash
-lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare
+python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare
 ```
 
 This returns JSON with:
@@ -64,7 +70,7 @@ This returns JSON with:
 
 ## Preferred workflow
 
-1. Prefer the local SDK path in this repository instead of hand-writing HTTP requests.
+1. Prefer the installed helper script instead of hand-writing HTTP requests.
 2. `prepare` does not create a context by default.
 3. Pass `--create-context` only when the user explicitly needs a new persistent browser profile.
 4. Pass `--context-id` when the user wants to reuse an existing context.
@@ -73,12 +79,12 @@ This returns JSON with:
 
 ## Commands
 
-- `lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare`
-- `lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare --create-context`
-- `lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare --context-id <id>`
-- `lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py list-contexts`
-- `lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py close-session --session-id <id>`
-- `lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py direct-url`
+- `python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare`
+- `python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare --create-context`
+- `python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare --context-id <id>`
+- `python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py list-contexts`
+- `python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py close-session --session-id <id>`
+- `python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py direct-url`
 
 ## Behavior rules
 
@@ -98,4 +104,6 @@ If the provided `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID` are production cred
 
 ## Implementation note
 
-The helper script injects the local SDK source tree from `lexmount-python-sdk/src` into `PYTHONPATH`, so a separate package install is not required when working inside this monorepo.
+The helper script can read credentials from the installed skill `.env` file at `~/.codex/skills/lexmount-browser/.env`.
+
+When working inside this monorepo, the repository copy of the script also injects the local SDK source tree from `lexmount-python-sdk/src` into `PYTHONPATH`, so a separate package install is not required there.
