@@ -53,8 +53,8 @@ def _load_sdk():
                 "ok": False,
                 "error": "sdk_import_failed",
                 "message": (
-                    "Failed to import local lexmount SDK. Ensure "
-                    "lexmount-python-sdk and its Python dependencies are available."
+                    "Failed to import the lexmount SDK. Ensure the installed skill "
+                    "virtual environment has been bootstrapped with requirements.txt."
                 ),
                 "details": str(exc),
                 "sdk_src": str(SDK_SRC),

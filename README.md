@@ -12,12 +12,18 @@ supports the direct shared-browser websocket form as a fallback.
 
 ## Runtime commands
 
-Initialize a local virtual environment after installation:
+During `npx` installation, the installer can create the skill-local virtual environment for you.
+
+If you skip that step, initialize it manually after installation:
+
+Create the virtual environment inside the installed skill directory at `~/.codex/skills/lexmount-browser/.venv`.
 
 ```bash
 python3 -m venv ~/.codex/skills/lexmount-browser/.venv
 ~/.codex/skills/lexmount-browser/.venv/bin/pip install -r ~/.codex/skills/lexmount-browser/requirements.txt
 ```
+
+This installs the Lexmount SDK and the Playwright Python client into the skill-local virtual environment.
 
 After installation into `~/.codex/skills/lexmount-browser`, use:
 

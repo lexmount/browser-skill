@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { stdin as input, stdout as output } from "node:process";
@@ -77,15 +78,43 @@ async function promptConfig() {
     streams.output.write("Lexmount skill setup\n");
     const apiKey = (await rl.question("LEXMOUNT_API_KEY: ")).trim();
     const projectId = (await rl.question("LEXMOUNT_PROJECT_ID: ")).trim();
+    const installDepsAnswer = (
+      await rl.question("Create ~/.codex/skills/lexmount-browser/.venv and install requirements now? [Y/n]: ")
+    ).trim().toLowerCase();
 
     return {
       apiKey,
       projectId,
+      installDeps: installDepsAnswer === "" || installDepsAnswer === "y" || installDepsAnswer === "yes",
     };
   } finally {
     rl.close();
     streams.close();
   }
+}
+
+function runCommand(command, args, cwd) {
+  const result = spawnSync(command, args, {
+    cwd,
+    stdio: "inherit",
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
+  }
+}
+
+function installPythonVenv() {
+  const venvDir = path.join(targetDir, ".venv");
+  const requirementsFile = path.join(targetDir, "requirements.txt");
+  const pipPath = path.join(venvDir, "bin", "pip");
+
+  runCommand("python3", ["-m", "venv", venvDir], targetDir);
+  runCommand(pipPath, ["install", "-r", requirementsFile], targetDir);
 }
 
 async function main() {
@@ -104,14 +133,28 @@ async function main() {
 
   fs.writeFileSync(path.join(targetDir, ".env"), envFileContent(config), "utf8");
 
+  if (config.installDeps) {
+    console.log("");
+    console.log("Creating skill-local virtual environment and installing Python dependencies...");
+    installPythonVenv();
+  }
+
   console.log(`Installed skill to ${targetDir}`);
   console.log("");
   console.log("Saved configuration to:");
   console.log(`  ${path.join(targetDir, ".env")}`);
   console.log("");
-  console.log("Initialize Python dependencies with:");
-  console.log(`  python3 -m venv ${path.join(targetDir, ".venv")}`);
-  console.log(`  ${path.join(targetDir, ".venv", "bin", "pip")} install -r ${path.join(targetDir, "requirements.txt")}`);
+  console.log("Create the virtual environment inside the installed skill directory:");
+  console.log(`  ${path.join(targetDir, ".venv")}`);
+  console.log("");
+  if (config.installDeps) {
+    console.log("Python dependencies were installed into:");
+    console.log(`  ${path.join(targetDir, ".venv")}`);
+  } else {
+    console.log("Initialize Python dependencies with:");
+    console.log(`  python3 -m venv ${path.join(targetDir, ".venv")}`);
+    console.log(`  ${path.join(targetDir, ".venv", "bin", "pip")} install -r ${path.join(targetDir, "requirements.txt")}`);
+  }
   console.log("");
   console.log("You can update these values later by editing that file.");
   console.log("Restart Codex to ensure the new skill is discovered.");

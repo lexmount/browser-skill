@@ -29,10 +29,18 @@ Flow:
 
 Installed skill initialization:
 
+During `npx` installation, prefer confirming the prompt that creates the skill-local virtual environment and installs dependencies.
+
+If that step was skipped, run:
+
+Create the virtual environment inside the installed skill directory at `~/.codex/skills/lexmount-browser/.venv`.
+
 ```bash
 python3 -m venv ~/.codex/skills/lexmount-browser/.venv
 ~/.codex/skills/lexmount-browser/.venv/bin/pip install -r ~/.codex/skills/lexmount-browser/requirements.txt
 ```
+
+This installs the Lexmount SDK and the Playwright Python client into the skill-local virtual environment.
 
 ```bash
 ~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare

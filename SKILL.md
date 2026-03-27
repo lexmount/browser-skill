@@ -1,7 +1,7 @@
 ---
 name: lexmount-browser
 description: Use when the user wants Codex to create, reuse, or connect to a Lexmount remote browser session. Supports creating contexts, creating browser sessions, returning CDP websocket URLs, listing contexts, and closing sessions. Prefer this skill over hand-written curl requests when working with Lexmount browser automation.
-compatibility: "Requires Python 3 plus the dependencies in `requirements.txt`. Use the installed skill path under `~/.codex/skills/lexmount-browser` by default. If running from this repository during development, prefer `lexmount-python-sdk-quickstart/venv` because it already has `httpx` and `python-dotenv`. Authenticated SDK commands require `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`. `LEXMOUNT_BASE_URL` is optional and should be set to `https://apitest.local.lexmount.net` only in the office test environment."
+compatibility: "Requires Python 3 plus the dependencies in `requirements.txt`, including `lexmount` and `playwright` for installed-skill usage. Use the installed skill path under `~/.codex/skills/lexmount-browser` by default. If running from this repository during development, prefer `lexmount-python-sdk-quickstart/venv` because it already has the SDK dependencies. Authenticated SDK commands require `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`. `LEXMOUNT_BASE_URL` is optional and should be set to `https://apitest.local.lexmount.net` only in the office test environment."
 allowed-tools: Bash
 ---
 
@@ -11,12 +11,18 @@ Use this skill when the task needs a Lexmount remote browser for automation, deb
 
 ## Setup check
 
-Initialize an installed skill with a virtual environment:
+During `npx` installation, prefer confirming the prompt that creates the skill-local virtual environment and installs dependencies.
+
+If that step was skipped, initialize the installed skill manually:
+
+The virtual environment should live inside the installed skill directory at `~/.codex/skills/lexmount-browser/.venv`.
 
 ```bash
 python3 -m venv ~/.codex/skills/lexmount-browser/.venv
 ~/.codex/skills/lexmount-browser/.venv/bin/pip install -r ~/.codex/skills/lexmount-browser/requirements.txt
 ```
+
+This installs the Lexmount SDK and the Playwright Python client into the skill-local virtual environment.
 
 Then use:
 
@@ -36,7 +42,7 @@ If you are developing from this repository instead of the installed skill, prefe
 lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py --help
 ```
 
-Use any Python environment that can import `httpx` and `dotenv`.
+Use any Python environment that can import `lexmount`, `playwright`, `httpx`, and `dotenv`.
 
 ## Environment
 
