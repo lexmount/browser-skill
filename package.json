@@ -24,7 +24,9 @@
     "SKILL.md",
     "REFERENCE.md",
     "README.md",
-    "scripts",
-    "tools"
+    "scripts/lexmount_browser.py",
+    "tools/install-skill.mjs",
+    "tools/upload-package-to-cos.mjs",
+    "tools/upload-package-to-cos.py"
   ]
 }
