@@ -27,13 +27,20 @@ Flow:
 
 ## Helper commands
 
+Installed skill initialization:
+
 ```bash
-python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare
-python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare --create-context
-python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare --context-id <id>
-python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py list-contexts
-python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py close-session --session-id <id>
-python3 ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py direct-url
+python3 -m venv ~/.codex/skills/lexmount-browser/.venv
+~/.codex/skills/lexmount-browser/.venv/bin/pip install -r ~/.codex/skills/lexmount-browser/requirements.txt
+```
+
+```bash
+~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare
+~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare --create-context
+~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare --context-id <id>
+~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py list-contexts
+~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py close-session --session-id <id>
+~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py direct-url
 ```
 
 For repository-local development, the equivalent commands can still use:

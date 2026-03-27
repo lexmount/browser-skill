@@ -13,7 +13,7 @@ const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 const skillsDir = path.join(codexHome, "skills");
 const targetDir = path.join(skillsDir, skillName);
 
-const entriesToCopy = ["SKILL.md", "REFERENCE.md", "README.md", "scripts"];
+const entriesToCopy = ["SKILL.md", "REFERENCE.md", "README.md", "requirements.txt", "scripts"];
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -108,6 +108,10 @@ async function main() {
   console.log("");
   console.log("Saved configuration to:");
   console.log(`  ${path.join(targetDir, ".env")}`);
+  console.log("");
+  console.log("Initialize Python dependencies with:");
+  console.log(`  python3 -m venv ${path.join(targetDir, ".venv")}`);
+  console.log(`  ${path.join(targetDir, ".venv", "bin", "pip")} install -r ${path.join(targetDir, "requirements.txt")}`);
   console.log("");
   console.log("You can update these values later by editing that file.");
   console.log("Restart Codex to ensure the new skill is discovered.");
