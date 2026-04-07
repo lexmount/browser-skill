@@ -64,6 +64,7 @@ Bundled example cases:
 
 The `research knowledge` command turns the skill into a producer/consumer browser pipeline:
 
+- producer and consumer browser sessions are created in parallel at startup
 - one producer browser opens search result pages and keeps enqueueing links
 - multiple consumer browsers pull links from the queue in parallel
 - each consumer processes every URL in a fresh page to avoid cross-site navigation interference
@@ -88,6 +89,7 @@ Important parameters:
 
 - `--query`: the search query issued by the producer browser
 - `--max-links`: how many search result links to stream to consumers
+- `--min-success-pages`: keep producing beyond `--max-links` until this many pages succeed, unless search pages are exhausted
 - `--consumer-count`: number of consumer browsers
 - `--search-engine`: built-in defaults for `bing`, `google`, or `duckduckgo`
 - `--search-url-template`: optional custom search URL template using `{query}`, `{offset}`, and `{page}`

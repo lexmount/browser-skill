@@ -75,6 +75,8 @@ def _print_research_terminal_summary(summary: dict[str, Any]) -> None:
             lines.append(str(path))
     else:
         lines.append("(none)")
+    lines.append("Summary JSON:")
+    lines.append(f"  {summary.get('output_dir', '')}/summary.json")
     lines.append(f"Success Pages: {summary.get('success_count', 0)}")
 
     print("\n".join(lines))
@@ -83,6 +85,11 @@ def _print_research_terminal_summary(summary: dict[str, Any]) -> None:
 def _terminal_log(message: str) -> None:
     with TERMINAL_LOG_LOCK:
         print(message, file=sys.stderr, flush=True)
+
+
+def _current_research_success_count(results_lock: threading.Lock, consumed_results: list[dict[str, Any]]) -> int:
+    with results_lock:
+        return len(consumed_results)
 
 
 def _success(command: str, **payload: Any) -> None:
@@ -853,6 +860,8 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
         _failure("research.knowledge", "invalid_max_links", "--max-links must be at least 1.")
     if args.search_pages_max < 1:
         _failure("research.knowledge", "invalid_search_pages_max", "--search-pages-max must be at least 1.")
+    if args.min_success_pages < 0:
+        _failure("research.knowledge", "invalid_min_success_pages", "--min-success-pages must be at least 0.")
 
     defaults = _research_engine_defaults(args.search_engine)
     search_url_template = args.search_url_template or defaults["search_url_template"]
@@ -889,56 +898,88 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
     )
 
     try:
-        try:
-            producer_session = _research_create_session(client, browser_mode=args.producer_browser_mode)
-            created_sessions.append(producer_session)
-            _append_event(
-                event_log,
-                "research_session_created",
-                role="producer",
-                session=producer_session,
+        creation_jobs = [{"role": "producer", "browser_mode": args.producer_browser_mode}]
+        for index in range(args.consumer_count):
+            creation_jobs.append(
+                {
+                    "role": "consumer",
+                    "consumer_index": index + 1,
+                    "browser_mode": args.consumer_browser_mode,
+                }
             )
-        except LexmountError as exc:
-            _handle_sdk_error("research.knowledge", exc, role="producer")
-        except Exception as exc:
+
+        def create_session_job(job: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+            session = _research_create_session(client, browser_mode=str(job["browser_mode"]))
+            if job["role"] == "consumer":
+                session["consumer_index"] = job["consumer_index"]
+            return job, session
+
+        with ThreadPoolExecutor(max_workers=max(1, len(creation_jobs))) as executor:
+            future_map = {executor.submit(create_session_job, job): job for job in creation_jobs}
+            for future in as_completed(future_map):
+                job = future_map[future]
+                try:
+                    job_info, session = future.result()
+                    created_sessions.append(session)
+                    if job_info["role"] == "producer":
+                        producer_session = session
+                        _append_event(
+                            event_log,
+                            "research_session_created",
+                            role="producer",
+                            session=session,
+                        )
+                        _terminal_log(
+                            f"[producer] session_created session={session.get('session_id')} "
+                            f"browser_mode={job_info.get('browser_mode')}"
+                        )
+                    else:
+                        consumer_sessions.append(session)
+                        _append_event(
+                            event_log,
+                            "research_session_created",
+                            role="consumer",
+                            consumer_index=job_info["consumer_index"],
+                            session=session,
+                        )
+                        _terminal_log(
+                            f"[consumer-{job_info['consumer_index']}] session_created session={session.get('session_id')} "
+                            f"browser_mode={job_info.get('browser_mode')}"
+                        )
+                except LexmountError as exc:
+                    if job["role"] == "producer":
+                        _handle_sdk_error("research.knowledge", exc, role="producer")
+                    _append_event(
+                        event_log,
+                        "research_session_create_failed",
+                        role=job["role"],
+                        consumer_index=job.get("consumer_index"),
+                        error=exc.__class__.__name__,
+                        message=str(exc),
+                    )
+                except Exception as exc:
+                    if job["role"] == "producer":
+                        _failure(
+                            "research.knowledge",
+                            "producer_session_create_failed",
+                            str(exc),
+                            role="producer",
+                        )
+                    _append_event(
+                        event_log,
+                        "research_session_create_failed",
+                        role=job["role"],
+                        consumer_index=job.get("consumer_index"),
+                        error=exc.__class__.__name__,
+                        message=str(exc),
+                    )
+
+        if producer_session is None:
             _failure(
                 "research.knowledge",
                 "producer_session_create_failed",
-                str(exc),
-                role="producer",
+                "Failed to create producer session.",
             )
-
-        for index in range(args.consumer_count):
-            try:
-                session = _research_create_session(client, browser_mode=args.consumer_browser_mode)
-                session["consumer_index"] = index + 1
-                consumer_sessions.append(session)
-                created_sessions.append(session)
-                _append_event(
-                    event_log,
-                    "research_session_created",
-                    role="consumer",
-                    consumer_index=index + 1,
-                    session=session,
-                )
-            except LexmountError as exc:
-                _append_event(
-                    event_log,
-                    "research_session_create_failed",
-                    role="consumer",
-                    consumer_index=index + 1,
-                    error=exc.__class__.__name__,
-                    message=str(exc),
-                )
-            except Exception as exc:
-                _append_event(
-                    event_log,
-                    "research_session_create_failed",
-                    role="consumer",
-                    consumer_index=index + 1,
-                    error=exc.__class__.__name__,
-                    message=str(exc),
-                )
 
         if not consumer_sessions:
             _failure(
@@ -1054,8 +1095,14 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                 rank = 0
 
                 for page_index in range(args.search_pages_max):
-                    if rank >= args.max_links:
+                    current_success_count = _current_research_success_count(results_lock, consumed_results)
+                    if rank >= args.max_links and current_success_count >= args.min_success_pages:
                         break
+                    if rank >= args.max_links and current_success_count < args.min_success_pages:
+                        _terminal_log(
+                            f"[producer] continue beyond max-links={args.max_links} "
+                            f"because success_pages={current_success_count} < min_success_pages={args.min_success_pages}"
+                        )
 
                     offset = offset_start + (page_index * offset_step)
                     search_url = search_url_template.format(
@@ -1120,7 +1167,8 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                                 f"[producer] enqueue rank={rank} page={page_index + 1} url={normalized}"
                             )
                             link_queue.put(item)
-                            if rank >= args.max_links:
+                            current_success_count = _current_research_success_count(results_lock, consumed_results)
+                            if rank >= args.max_links and current_success_count >= args.min_success_pages:
                                 break
 
                         _append_event(
@@ -1134,14 +1182,23 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                         )
 
                         if accepted_on_page == 0 and not extracted:
+                            current_success_count = _current_research_success_count(results_lock, consumed_results)
                             _append_event(
                                 event_log,
                                 "producer_page_empty",
                                 page_index=page_index + 1,
                                 offset=offset,
                                 search_url=search_url,
+                                success_pages=current_success_count,
+                                min_success_pages=args.min_success_pages,
                             )
-                            break
+                            if current_success_count >= args.min_success_pages:
+                                break
+                            _terminal_log(
+                                f"[producer] page_empty page={page_index + 1} but continuing because "
+                                f"success_pages={current_success_count} < min_success_pages={args.min_success_pages}"
+                            )
+                            continue
                     except Exception as exc:
                         failure = {
                             "page_index": page_index + 1,
@@ -2485,6 +2542,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     research_knowledge.add_argument("--query", required=True, help="Search query used by the producer browser")
     research_knowledge.add_argument("--max-links", type=int, default=100, help="Maximum number of result links to enqueue")
+    research_knowledge.add_argument(
+        "--min-success-pages",
+        type=int,
+        default=0,
+        help="Keep producing beyond --max-links until at least this many pages have been captured successfully, or search pages are exhausted",
+    )
     research_knowledge.add_argument("--consumer-count", type=int, default=4, help="Number of consumer browsers to run in parallel")
     research_knowledge.add_argument("--queue-size", type=int, default=20, help="Maximum buffered links between producer and consumers")
     research_knowledge.add_argument("--search-engine", default="bing", choices=["bing", "google", "duckduckgo"])
