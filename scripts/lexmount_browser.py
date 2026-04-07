@@ -627,6 +627,34 @@ def _research_extract_links(page: "Page", selector: str) -> list[dict[str, Any]]
     )
 
 
+def _research_wait_for_results(page: "Page", selector: str, timeout_ms: float) -> int:
+    locator = page.locator(selector)
+    deadline = time.time() + max(float(timeout_ms), 0.0) / 1000.0
+    last_error: Exception | None = None
+
+    while True:
+        try:
+            count = locator.count()
+            if count > 0:
+                try:
+                    locator.first.wait_for(state="attached", timeout=500)
+                except Exception as exc:  # pragma: no cover - best effort only
+                    last_error = exc
+                return count
+        except Exception as exc:
+            last_error = exc
+
+        if time.time() >= deadline:
+            break
+        page.wait_for_timeout(250)
+
+    raise TimeoutError(
+        f"Timed out waiting for search results matching selector '{selector}'. "
+        f"last_error={last_error.__class__.__name__ if last_error else None}: "
+        f"{str(last_error) if last_error else 'no matching elements'}"
+    )
+
+
 def _research_capture_page(
     page: "Page",
     item: dict[str, Any],
@@ -716,6 +744,7 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
     produced_links: list[dict[str, Any]] = []
     consumed_results: list[dict[str, Any]] = []
     failed_results: list[dict[str, Any]] = []
+    producer_failures: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
     link_queue: queue.Queue[dict[str, Any] | None] = queue.Queue(maxsize=max(1, args.queue_size))
     results_lock = threading.Lock()
@@ -897,53 +926,80 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                         search_url=search_url,
                     )
 
-                    page.goto(search_url, wait_until=args.search_wait_until, timeout=args.search_timeout_ms)
-                    page.wait_for_selector(result_selector, state="visible", timeout=args.search_timeout_ms)
-                    extracted = _research_extract_links(page, result_selector)
+                    try:
+                        page.goto(search_url, wait_until=args.search_wait_until, timeout=args.search_timeout_ms)
+                        extracted_count = _research_wait_for_results(page, result_selector, args.search_timeout_ms)
+                        extracted = _research_extract_links(page, result_selector)
 
-                    accepted_on_page = 0
-                    for entry in extracted:
-                        normalized = _normalize_web_url(str(entry.get("href") or ""))
-                        if not normalized or normalized in seen_urls:
-                            continue
+                        accepted_on_page = 0
+                        for entry in extracted:
+                            normalized = _normalize_web_url(str(entry.get("href") or ""))
+                            if not normalized or normalized in seen_urls:
+                                continue
 
-                        seen_urls.add(normalized)
-                        rank += 1
-                        accepted_on_page += 1
-                        item = {
-                            "rank": rank,
-                            "url": normalized,
-                            "title": str(entry.get("text") or "").strip(),
-                            "search_page": page_index + 1,
-                            "search_offset": offset,
-                            "search_url": search_url,
-                        }
-                        produced_links.append(item)
-                        with links_log.open("a", encoding="utf-8") as fh:
-                            fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+                            seen_urls.add(normalized)
+                            rank += 1
+                            accepted_on_page += 1
+                            item = {
+                                "rank": rank,
+                                "url": normalized,
+                                "title": str(entry.get("text") or "").strip(),
+                                "search_page": page_index + 1,
+                                "search_offset": offset,
+                                "search_url": search_url,
+                            }
+                            produced_links.append(item)
+                            with links_log.open("a", encoding="utf-8") as fh:
+                                fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+                            _append_event(
+                                event_log,
+                                "producer_link_enqueued",
+                                rank=rank,
+                                url=normalized,
+                                search_page=page_index + 1,
+                            )
+                            link_queue.put(item)
+                            if rank >= args.max_links:
+                                break
+
                         _append_event(
                             event_log,
-                            "producer_link_enqueued",
-                            rank=rank,
-                            url=normalized,
-                            search_page=page_index + 1,
+                            "producer_page_finished",
+                            page_index=page_index + 1,
+                            offset=offset,
+                            extracted_count=max(len(extracted), extracted_count),
+                            accepted_count=accepted_on_page,
+                            total_produced=rank,
                         )
-                        link_queue.put(item)
-                        if rank >= args.max_links:
+
+                        if accepted_on_page == 0 and not extracted:
+                            _append_event(
+                                event_log,
+                                "producer_page_empty",
+                                page_index=page_index + 1,
+                                offset=offset,
+                                search_url=search_url,
+                            )
                             break
-
-                    _append_event(
-                        event_log,
-                        "producer_page_finished",
-                        page_index=page_index + 1,
-                        offset=offset,
-                        extracted_count=len(extracted),
-                        accepted_count=accepted_on_page,
-                        total_produced=rank,
-                    )
-
-                    if accepted_on_page == 0 and not extracted:
-                        break
+                    except Exception as exc:
+                        failure = {
+                            "page_index": page_index + 1,
+                            "offset": offset,
+                            "search_url": search_url,
+                            "error": exc.__class__.__name__,
+                            "message": str(exc),
+                        }
+                        producer_failures.append(failure)
+                        _append_event(
+                            event_log,
+                            "producer_page_failed",
+                            page_index=page_index + 1,
+                            offset=offset,
+                            search_url=search_url,
+                            error=exc.__class__.__name__,
+                            message=str(exc),
+                        )
+                        continue
             finally:
                 browser.close()
 
@@ -973,12 +1029,14 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
             "produced_count": len(produced_links),
             "consumed_count": len(consumed_results),
             "failed_count": len(failed_results),
+            "producer_failed_count": len(producer_failures),
             "requested_max_links": args.max_links,
             "requested_consumer_count": args.consumer_count,
             "actual_consumer_count": len(consumer_sessions),
             "produced_links": produced_links,
             "consumed_results": consumed_results,
             "failed_results": failed_results,
+            "producer_failures": producer_failures,
         }
         (output_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         _append_event(
@@ -988,6 +1046,7 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
             produced_count=summary["produced_count"],
             consumed_count=summary["consumed_count"],
             failed_count=summary["failed_count"],
+            producer_failed_count=summary["producer_failed_count"],
         )
     finally:
         if created_sessions and not args.keep_sessions:
