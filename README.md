@@ -98,6 +98,7 @@ Output files inside the run directory:
 - `links.jsonl`: links emitted by the producer
 - `results.jsonl`: per-link success or failure records from consumers
 - `summary.json`: full structured summary for the run
+- `pages/<rank>-.../page.html`: raw HTML saved for each successful page
 - `pages/<rank>-.../page.json`: captured page artifact per consumed URL
 
 For repository-local development, you can still use the quickstart virtualenv:

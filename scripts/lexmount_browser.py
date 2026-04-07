@@ -695,6 +695,8 @@ def _research_capture_page(
         "html": html,
         "captured_at": datetime.now(timezone.utc).isoformat(),
     }
+    html_path = page_dir / "page.html"
+    html_path.write_text(payload["html"], encoding="utf-8")
     page_json = page_dir / "page.json"
     page_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -705,6 +707,7 @@ def _research_capture_page(
         "title": payload["title"],
         "status": payload["status"],
         "artifact_dir": str(page_dir),
+        "html_path": str(html_path),
         "page_json": str(page_json),
         "screenshot": str(screenshot_path) if screenshot_path else None,
         "duration_ms": round((time.time() - started_at) * 1000, 2),
@@ -1012,6 +1015,19 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
         consumed_results.sort(key=lambda item: int(item.get("rank", 0)))
         failed_results.sort(key=lambda item: int(item.get("rank", 0) or 0))
 
+        total_visited_count = len(consumed_results) + len(failed_results)
+        success_html_paths = [item["html_path"] for item in consumed_results if item.get("html_path")]
+        success_storage = [
+            {
+                "rank": item.get("rank"),
+                "url": item.get("url"),
+                "html_path": item.get("html_path"),
+                "page_json": item.get("page_json"),
+            }
+            for item in consumed_results
+            if item.get("html_path")
+        ]
+
         summary = {
             "ok": len(produced_links) > 0 and len(failed_results) == 0,
             "command": "research.knowledge",
@@ -1027,12 +1043,17 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
             "producer_session": producer_session,
             "consumer_sessions": consumer_sessions,
             "produced_count": len(produced_links),
+            "visited_count": total_visited_count,
+            "success_count": len(consumed_results),
+            "failure_count": len(failed_results),
             "consumed_count": len(consumed_results),
             "failed_count": len(failed_results),
             "producer_failed_count": len(producer_failures),
             "requested_max_links": args.max_links,
             "requested_consumer_count": args.consumer_count,
             "actual_consumer_count": len(consumer_sessions),
+            "success_html_paths": success_html_paths,
+            "success_storage": success_storage,
             "produced_links": produced_links,
             "consumed_results": consumed_results,
             "failed_results": failed_results,
