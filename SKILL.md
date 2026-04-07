@@ -1,6 +1,6 @@
 ---
 name: lexmount-browser
-description: Use when the user wants Codex to create, reuse, or connect to a Lexmount remote browser session. Supports creating contexts, creating browser sessions, returning CDP websocket URLs, listing contexts, and closing sessions. Prefer this skill over hand-written curl requests when working with Lexmount browser automation.
+description: Use when the user wants Codex to create, reuse, inspect, or operate a Lexmount remote browser session. Supports context and session lifecycle commands plus Playwright-backed action commands such as opening pages, clicking, typing, screenshots, waiting for selectors, and extracting page snapshots. Prefer this skill over hand-written curl requests or ad hoc Playwright scripts when working with Lexmount browser automation.
 compatibility: "Requires Python 3 plus the dependencies in `requirements.txt`, including `lexmount` and `playwright` for installed-skill usage. Use the installed skill path under `~/.codex/skills/lexmount-browser` by default. If running from this repository during development, prefer `lexmount-python-sdk-quickstart/venv` because it already has the SDK dependencies. Authenticated SDK commands require `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`. `LEXMOUNT_BASE_URL` is optional and should be set to `https://apitest.local.lexmount.net` only in the office test environment."
 allowed-tools: Bash
 ---
@@ -89,28 +89,74 @@ This returns JSON with:
 
 ## Preferred workflow
 
-1. Prefer the installed helper script instead of hand-writing HTTP requests.
-2. `prepare` does not create a context by default.
-3. Pass `--create-context` only when the user explicitly needs a new persistent browser profile.
-4. Pass `--context-id` when the user wants to reuse an existing context.
-5. Use `close-session --session-id <id>` when cleanup is needed.
-6. Only use `direct-url` when the user explicitly wants the quick shared-browser connection method from `wss://.../connection`.
+1. Prefer the installed helper script instead of hand-writing HTTP requests or ad hoc Playwright code.
+2. Use `session create` for lifecycle work and `action ...` commands for browser interactions.
+3. `prepare` remains available as a compatibility alias for `session create`.
+4. `session create` does not create a context by default.
+5. Pass `--create-context` only when the user explicitly needs a new persistent browser profile.
+6. Pass `--context-id` when the user wants to reuse an existing context.
+7. Use `session close --session-id <id>` when cleanup is needed.
+8. Use `action open-url`, `action click`, `action type`, `action wait-selector`, `action screenshot`, `action eval`, or `action snapshot` for the common interaction path.
+9. Use `case validate` and `case run` when the task is a repeatable multi-step flow that should live in a file instead of a one-off terminal command.
+10. Use `run submit/list/summary/watch/retry` when the user wants to launch the same case multiple times, inspect batch-level status, quickly understand local run results, or rerun failed batches.
+11. Only use `direct-url` when the user explicitly wants the quick shared-browser connection method from `wss://.../connection`.
 
 ## Commands
 
+### Session lifecycle
+
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session create`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session create --create-context`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session create --context-id <id>`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session list`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session get --session-id <id>`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session close --session-id <id>`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session keepalive --session-id <id>`
+
+### Context lifecycle
+
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py context create`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py context list`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py context get --context-id <id>`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py context delete --context-id <id>`
+
+### Browser actions
+
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py action open-url --session-id <id> --url https://example.com`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py action wait-selector --session-id <id> --selector 'button'`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py action click --session-id <id> --selector 'button'`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py action type --session-id <id> --selector 'input[name=q]' --text 'hello'`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py action screenshot --session-id <id> --output /tmp/example.png`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py action eval --session-id <id> --expression '() => document.title'`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py action snapshot --session-id <id>`
+
+### Case execution
+
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py case validate --file /path/to/case.json`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py case run --file /path/to/case.json --stop-on-error`
+
+### Batch run control
+
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run submit --file /path/to/case.json --count 5 --concurrency 2`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run list`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run summary --batch-id <batch_id>`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run watch --batch-id <batch_id> --expected-count 5`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run watch --batch-id <batch_id> --live --changes-only`
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run retry --batch-id <batch_id>`
+
+### Compatibility and direct connection
+
 - `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare`
-- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare --create-context`
-- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py prepare --context-id <id>`
 - `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py list-contexts`
 - `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py close-session --session-id <id>`
 - `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py direct-url`
 
 ## Behavior rules
 
-- Prefer `prepare` over `direct-url`.
+- Prefer `session create` over `direct-url`.
 - Default session browser mode is `normal`.
 - Default context mode is `read_write`.
-- `prepare` creates a plain session by default and does not allocate a context unless `--create-context` or `--context-id` is provided.
+- `session create` creates a plain session by default and does not allocate a context unless `--create-context` or `--context-id` is provided.
 - Return structured JSON to the caller instead of prose when using the helper script.
 - If the SDK import fails, tell the user that `lexmount-python-sdk` or its Python dependencies are not ready in the current environment.
 - If credentials are missing, report which environment variable is absent.

@@ -1,0 +1,28 @@
+{
+  "session": {
+    "create": true,
+    "browser_mode": "normal"
+  },
+  "close_created_session": true,
+  "steps": [
+    {
+      "action": "open-url",
+      "url": "https://example.com",
+      "wait_until": "load"
+    },
+    {
+      "action": "wait-selector",
+      "selector": "body",
+      "state": "visible"
+    },
+    {
+      "action": "snapshot",
+      "max_chars": 2000
+    },
+    {
+      "action": "screenshot",
+      "output": "example-home.png",
+      "full_page": true
+    }
+  ]
+}

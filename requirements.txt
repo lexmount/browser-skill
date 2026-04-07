@@ -2,3 +2,4 @@ lexmount
 playwright
 httpx
 python-dotenv
+PyYAML

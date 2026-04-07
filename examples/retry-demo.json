@@ -1,0 +1,20 @@
+{
+  "session": {
+    "create": true,
+    "browser_mode": "normal"
+  },
+  "close_created_session": true,
+  "steps": [
+    {
+      "action": "open-url",
+      "url": "https://example.com",
+      "wait_until": "load"
+    },
+    {
+      "action": "wait-selector",
+      "selector": "body",
+      "state": "visible",
+      "timeout_ms": 1000
+    }
+  ]
+}
