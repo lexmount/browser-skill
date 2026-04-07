@@ -617,15 +617,16 @@ def _research_create_session(client: "Lexmount", *, browser_mode: str) -> dict[s
 
 def _research_close_sessions(client: "Lexmount", sessions: list[dict[str, Any]], event_log: Path) -> list[dict[str, Any]]:
     closed: list[dict[str, Any]] = []
-    for session in sessions:
+
+    def close_one(session: dict[str, Any]) -> dict[str, Any] | None:
         session_id = session.get("session_id")
         if not session_id:
-            continue
+            return None
         try:
             client.sessions.delete(session_id=session_id)
             result = {"session_id": session_id, "closed": True}
-            closed.append(result)
             _append_event(event_log, "research_session_closed", session_id=session_id, ok=True)
+            return result
         except Exception as exc:  # pragma: no cover - best effort cleanup
             result = {
                 "session_id": session_id,
@@ -633,7 +634,6 @@ def _research_close_sessions(client: "Lexmount", sessions: list[dict[str, Any]],
                 "error": exc.__class__.__name__,
                 "message": str(exc),
             }
-            closed.append(result)
             _append_event(
                 event_log,
                 "research_session_closed",
@@ -642,6 +642,16 @@ def _research_close_sessions(client: "Lexmount", sessions: list[dict[str, Any]],
                 error=exc.__class__.__name__,
                 message=str(exc),
             )
+            return result
+
+    with ThreadPoolExecutor(max_workers=max(1, len(sessions))) as executor:
+        futures = [executor.submit(close_one, session) for session in sessions]
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                closed.append(result)
+
+    closed.sort(key=lambda item: str(item.get("session_id") or ""))
     return closed
 
 

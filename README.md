@@ -65,6 +65,7 @@ Bundled example cases:
 The `research knowledge` command turns the skill into a producer/consumer browser pipeline:
 
 - producer and consumer browser sessions are created in parallel at startup
+- producer and consumer browser sessions are also closed in parallel during cleanup
 - one producer browser opens search result pages and keeps enqueueing links
 - multiple consumer browsers pull links from the queue in parallel
 - each consumer processes every URL in a fresh page to avoid cross-site navigation interference
