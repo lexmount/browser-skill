@@ -51,6 +51,7 @@ Other common commands:
 ~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run summary --batch-id <batch_id>
 ~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run retry --batch-id <batch_id>
 ~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py direct-url
+~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py research knowledge --query "browser use benchmark" --max-links 100 --consumer-count 8
 ```
 
 Bundled example cases:
@@ -58,6 +59,45 @@ Bundled example cases:
 - `browser-skill/examples/basic-open.json`: smoke case for open, wait, snapshot, and screenshot
 - `browser-skill/examples/retry-demo.json`: success case for retry demonstrations after a failing batch is fixed
 - `browser-skill/examples/retry-demo-fail.json`: intentionally failing case for retry workflow validation
+
+## Streaming knowledge research template
+
+The `research knowledge` command turns the skill into a producer/consumer browser pipeline:
+
+- one producer browser opens search result pages and keeps enqueueing links
+- multiple consumer browsers pull links from the queue in parallel
+- each consumer stores `page.json` artifacts with title, URL, HTML excerpt, and text excerpt
+- optional screenshots can be captured with `--screenshot`
+
+Example:
+
+```bash
+lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py \
+  research knowledge \
+  --query "site:openai.com browser agents" \
+  --max-links 100 \
+  --consumer-count 6 \
+  --search-engine bing \
+  --output-dir /tmp/lexmount-runs/research-openai
+```
+
+Important parameters:
+
+- `--query`: the search query issued by the producer browser
+- `--max-links`: how many search result links to stream to consumers
+- `--consumer-count`: number of consumer browsers
+- `--search-engine`: built-in defaults for `bing`, `google`, or `duckduckgo`
+- `--search-url-template`: optional custom search URL template using `{query}`, `{offset}`, and `{page}`
+- `--result-selector`: optional CSS selector for result links
+- `--keep-sessions`: keep sessions open instead of closing them automatically
+
+Output files inside the run directory:
+
+- `events.jsonl`: producer and consumer lifecycle events
+- `links.jsonl`: links emitted by the producer
+- `results.jsonl`: per-link success or failure records from consumers
+- `summary.json`: full structured summary for the run
+- `pages/<rank>-.../page.json`: captured page artifact per consumed URL
 
 For repository-local development, you can still use the quickstart virtualenv:
 

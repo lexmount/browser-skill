@@ -4,16 +4,21 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import queue
+import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict
+from urllib.parse import quote_plus, urlsplit, urlunsplit
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -521,6 +526,488 @@ def _read_events(log_path: Path) -> list[dict[str, Any]]:
         if isinstance(item, dict):
             events.append(item)
     return events
+
+
+def _slugify(value: str, *, fallback: str = "item", max_length: int = 80) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value).strip("-").lower()
+    if not slug:
+        slug = fallback
+    return slug[:max_length].strip("-") or fallback
+
+
+def _normalize_web_url(raw: str) -> str | None:
+    if not raw:
+        return None
+    parsed = urlsplit(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
+
+
+def _research_engine_defaults(engine: str) -> dict[str, Any]:
+    mapping = {
+        "bing": {
+            "search_url_template": "https://www.bing.com/search?q={query}&first={offset}",
+            "result_selector": "li.b_algo h2 a",
+            "offset_start": 1,
+            "offset_step": 10,
+        },
+        "google": {
+            "search_url_template": "https://www.google.com/search?q={query}&start={offset}",
+            "result_selector": "div.yuRUbf > a",
+            "offset_start": 0,
+            "offset_step": 10,
+        },
+        "duckduckgo": {
+            "search_url_template": "https://html.duckduckgo.com/html/?q={query}&s={offset}",
+            "result_selector": "a.result__a",
+            "offset_start": 0,
+            "offset_step": 30,
+        },
+    }
+    return mapping[engine]
+
+
+def _research_output_dir(args: argparse.Namespace) -> tuple[str, Path]:
+    run_id = args.run_id or f"research-{_case_now()}"
+    output_dir = Path(args.output_dir) if args.output_dir else _runs_root() / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return run_id, output_dir
+
+
+def _research_create_session(client: "Lexmount", *, browser_mode: str) -> dict[str, Any]:
+    session = client.sessions.create(browser_mode=browser_mode)
+    info = _serialize_session(session)
+    connect_url = info.get("connect_url")
+    if not connect_url:
+        raise RuntimeError("created session did not expose connect_url")
+    return info
+
+
+def _research_close_sessions(client: "Lexmount", sessions: list[dict[str, Any]], event_log: Path) -> list[dict[str, Any]]:
+    closed: list[dict[str, Any]] = []
+    for session in sessions:
+        session_id = session.get("session_id")
+        if not session_id:
+            continue
+        try:
+            client.sessions.delete(session_id=session_id)
+            result = {"session_id": session_id, "closed": True}
+            closed.append(result)
+            _append_event(event_log, "research_session_closed", session_id=session_id, ok=True)
+        except Exception as exc:  # pragma: no cover - best effort cleanup
+            result = {
+                "session_id": session_id,
+                "closed": False,
+                "error": exc.__class__.__name__,
+                "message": str(exc),
+            }
+            closed.append(result)
+            _append_event(
+                event_log,
+                "research_session_closed",
+                session_id=session_id,
+                ok=False,
+                error=exc.__class__.__name__,
+                message=str(exc),
+            )
+    return closed
+
+
+def _research_extract_links(page: "Page", selector: str) -> list[dict[str, Any]]:
+    return page.eval_on_selector_all(
+        selector,
+        """
+        (elements) => elements.map((el, index) => ({
+          index,
+          href: el.href || el.getAttribute('href') || '',
+          text: (el.innerText || el.textContent || '').trim()
+        }))
+        """,
+    )
+
+
+def _research_capture_page(
+    page: "Page",
+    item: dict[str, Any],
+    output_root: Path,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    rank = int(item["rank"])
+    url = str(item["url"])
+    slug_seed = item.get("title") or url
+    slug = _slugify(str(slug_seed), fallback=f"page-{rank:03d}")
+    digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:10]
+    page_dir = output_root / "pages" / f"{rank:03d}-{slug}-{digest}"
+    page_dir.mkdir(parents=True, exist_ok=True)
+
+    started_at = time.time()
+    response = page.goto(url, wait_until=args.page_wait_until, timeout=args.page_timeout_ms)
+    page.wait_for_selector(args.content_selector, state=args.content_wait_state, timeout=args.page_timeout_ms)
+
+    html = page.content()
+    text = page.locator("body").inner_text(timeout=args.page_timeout_ms)
+    if args.max_chars > 0:
+        html = html[:args.max_chars]
+        text = text[:args.max_chars]
+
+    screenshot_path = None
+    if args.screenshot:
+        screenshot_path = page_dir / "page.png"
+        page.screenshot(path=str(screenshot_path), full_page=True, timeout=args.page_timeout_ms)
+
+    payload = {
+        "rank": rank,
+        "source": item,
+        "url": url,
+        "final_url": page.url,
+        "title": page.title(),
+        "status": response.status if response else None,
+        "text": text,
+        "html": html,
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+    }
+    page_json = page_dir / "page.json"
+    page_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "rank": rank,
+        "url": url,
+        "final_url": page.url,
+        "title": payload["title"],
+        "status": payload["status"],
+        "artifact_dir": str(page_dir),
+        "page_json": str(page_json),
+        "screenshot": str(screenshot_path) if screenshot_path else None,
+        "duration_ms": round((time.time() - started_at) * 1000, 2),
+        "text_chars": len(text),
+        "html_chars": len(html),
+    }
+
+
+def cmd_research_knowledge(args: argparse.Namespace) -> None:
+    run_id, output_dir = _research_output_dir(args)
+    event_log = output_dir / "events.jsonl"
+    links_log = output_dir / "links.jsonl"
+    results_log = output_dir / "results.jsonl"
+
+    if args.consumer_count < 1:
+        _failure("research.knowledge", "invalid_consumer_count", "--consumer-count must be at least 1.")
+    if args.max_links < 1:
+        _failure("research.knowledge", "invalid_max_links", "--max-links must be at least 1.")
+    if args.search_pages_max < 1:
+        _failure("research.knowledge", "invalid_search_pages_max", "--search-pages-max must be at least 1.")
+
+    defaults = _research_engine_defaults(args.search_engine)
+    search_url_template = args.search_url_template or defaults["search_url_template"]
+    result_selector = args.result_selector or defaults["result_selector"]
+    offset_start = defaults["offset_start"]
+    offset_step = args.page_size if args.page_size > 0 else defaults["offset_step"]
+
+    client = _build_client()
+    _, LexmountError, _ = _load_sdk()
+    sync_playwright = _load_playwright()
+
+    created_sessions: list[dict[str, Any]] = []
+    closed_sessions: list[dict[str, Any]] = []
+    producer_session: dict[str, Any] | None = None
+    consumer_sessions: list[dict[str, Any]] = []
+
+    produced_links: list[dict[str, Any]] = []
+    consumed_results: list[dict[str, Any]] = []
+    failed_results: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    link_queue: queue.Queue[dict[str, Any] | None] = queue.Queue(maxsize=max(1, args.queue_size))
+    results_lock = threading.Lock()
+
+    _append_event(
+        event_log,
+        "research_started",
+        run_id=run_id,
+        query=args.query,
+        max_links=args.max_links,
+        consumer_count=args.consumer_count,
+        search_engine=args.search_engine,
+        output_dir=str(output_dir),
+    )
+
+    try:
+        try:
+            producer_session = _research_create_session(client, browser_mode=args.producer_browser_mode)
+            created_sessions.append(producer_session)
+            _append_event(
+                event_log,
+                "research_session_created",
+                role="producer",
+                session=producer_session,
+            )
+        except LexmountError as exc:
+            _handle_sdk_error("research.knowledge", exc, role="producer")
+        except Exception as exc:
+            _failure(
+                "research.knowledge",
+                "producer_session_create_failed",
+                str(exc),
+                role="producer",
+            )
+
+        for index in range(args.consumer_count):
+            try:
+                session = _research_create_session(client, browser_mode=args.consumer_browser_mode)
+                session["consumer_index"] = index + 1
+                consumer_sessions.append(session)
+                created_sessions.append(session)
+                _append_event(
+                    event_log,
+                    "research_session_created",
+                    role="consumer",
+                    consumer_index=index + 1,
+                    session=session,
+                )
+            except LexmountError as exc:
+                _append_event(
+                    event_log,
+                    "research_session_create_failed",
+                    role="consumer",
+                    consumer_index=index + 1,
+                    error=exc.__class__.__name__,
+                    message=str(exc),
+                )
+            except Exception as exc:
+                _append_event(
+                    event_log,
+                    "research_session_create_failed",
+                    role="consumer",
+                    consumer_index=index + 1,
+                    error=exc.__class__.__name__,
+                    message=str(exc),
+                )
+
+        if not consumer_sessions:
+            _failure(
+                "research.knowledge",
+                "no_consumer_sessions",
+                "Failed to create any consumer sessions.",
+                requested_consumer_count=args.consumer_count,
+            )
+
+        def consumer_worker(session_info: dict[str, Any]) -> None:
+            consumer_index = int(session_info.get("consumer_index", 0))
+            connect_url = str(session_info["connect_url"])
+            _append_event(
+                event_log,
+                "consumer_started",
+                consumer_index=consumer_index,
+                session_id=session_info.get("session_id"),
+            )
+
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.connect_over_cdp(connect_url)
+                try:
+                    context = browser.contexts[0] if browser.contexts else browser.new_context()
+                    page = _get_or_create_page(context)
+                    while True:
+                        item = link_queue.get()
+                        if item is None:
+                            link_queue.task_done()
+                            _append_event(event_log, "consumer_stopped", consumer_index=consumer_index)
+                            break
+
+                        _append_event(
+                            event_log,
+                            "consumer_item_started",
+                            consumer_index=consumer_index,
+                            rank=item.get("rank"),
+                            url=item.get("url"),
+                        )
+                        try:
+                            result = _research_capture_page(page, item, output_dir, args)
+                            result["ok"] = True
+                            result["consumer_index"] = consumer_index
+                            with results_lock:
+                                consumed_results.append(result)
+                            with results_log.open("a", encoding="utf-8") as fh:
+                                fh.write(json.dumps(result, ensure_ascii=False) + "\n")
+                            _append_event(
+                                event_log,
+                                "consumer_item_finished",
+                                consumer_index=consumer_index,
+                                rank=result.get("rank"),
+                                url=result.get("url"),
+                                ok=True,
+                                duration_ms=result.get("duration_ms"),
+                            )
+                        except Exception as exc:
+                            failure = {
+                                "ok": False,
+                                "consumer_index": consumer_index,
+                                "rank": item.get("rank"),
+                                "url": item.get("url"),
+                                "error": exc.__class__.__name__,
+                                "message": str(exc),
+                            }
+                            with results_lock:
+                                failed_results.append(failure)
+                            with results_log.open("a", encoding="utf-8") as fh:
+                                fh.write(json.dumps(failure, ensure_ascii=False) + "\n")
+                            _append_event(
+                                event_log,
+                                "consumer_item_finished",
+                                consumer_index=consumer_index,
+                                rank=item.get("rank"),
+                                url=item.get("url"),
+                                ok=False,
+                                error=exc.__class__.__name__,
+                                message=str(exc),
+                            )
+                        finally:
+                            link_queue.task_done()
+                finally:
+                    browser.close()
+
+        workers = [
+            threading.Thread(target=consumer_worker, args=(session_info,), daemon=True)
+            for session_info in consumer_sessions
+        ]
+        for worker in workers:
+            worker.start()
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.connect_over_cdp(str(producer_session["connect_url"]))
+            try:
+                context = browser.contexts[0] if browser.contexts else browser.new_context()
+                page = _get_or_create_page(context)
+                rank = 0
+
+                for page_index in range(args.search_pages_max):
+                    if rank >= args.max_links:
+                        break
+
+                    offset = offset_start + (page_index * offset_step)
+                    search_url = search_url_template.format(
+                        query=quote_plus(args.query),
+                        offset=offset,
+                        page=page_index + 1,
+                    )
+                    _append_event(
+                        event_log,
+                        "producer_page_started",
+                        page_index=page_index + 1,
+                        offset=offset,
+                        search_url=search_url,
+                    )
+
+                    page.goto(search_url, wait_until=args.search_wait_until, timeout=args.search_timeout_ms)
+                    page.wait_for_selector(result_selector, state="visible", timeout=args.search_timeout_ms)
+                    extracted = _research_extract_links(page, result_selector)
+
+                    accepted_on_page = 0
+                    for entry in extracted:
+                        normalized = _normalize_web_url(str(entry.get("href") or ""))
+                        if not normalized or normalized in seen_urls:
+                            continue
+
+                        seen_urls.add(normalized)
+                        rank += 1
+                        accepted_on_page += 1
+                        item = {
+                            "rank": rank,
+                            "url": normalized,
+                            "title": str(entry.get("text") or "").strip(),
+                            "search_page": page_index + 1,
+                            "search_offset": offset,
+                            "search_url": search_url,
+                        }
+                        produced_links.append(item)
+                        with links_log.open("a", encoding="utf-8") as fh:
+                            fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+                        _append_event(
+                            event_log,
+                            "producer_link_enqueued",
+                            rank=rank,
+                            url=normalized,
+                            search_page=page_index + 1,
+                        )
+                        link_queue.put(item)
+                        if rank >= args.max_links:
+                            break
+
+                    _append_event(
+                        event_log,
+                        "producer_page_finished",
+                        page_index=page_index + 1,
+                        offset=offset,
+                        extracted_count=len(extracted),
+                        accepted_count=accepted_on_page,
+                        total_produced=rank,
+                    )
+
+                    if accepted_on_page == 0 and not extracted:
+                        break
+            finally:
+                browser.close()
+
+        for _ in consumer_sessions:
+            link_queue.put(None)
+        link_queue.join()
+        for worker in workers:
+            worker.join()
+
+        consumed_results.sort(key=lambda item: int(item.get("rank", 0)))
+        failed_results.sort(key=lambda item: int(item.get("rank", 0) or 0))
+
+        summary = {
+            "ok": len(produced_links) > 0 and len(failed_results) == 0,
+            "command": "research.knowledge",
+            "run_id": run_id,
+            "query": args.query,
+            "search_engine": args.search_engine,
+            "search_url_template": search_url_template,
+            "result_selector": result_selector,
+            "output_dir": str(output_dir),
+            "events_path": str(event_log),
+            "links_path": str(links_log),
+            "results_path": str(results_log),
+            "producer_session": producer_session,
+            "consumer_sessions": consumer_sessions,
+            "produced_count": len(produced_links),
+            "consumed_count": len(consumed_results),
+            "failed_count": len(failed_results),
+            "requested_max_links": args.max_links,
+            "requested_consumer_count": args.consumer_count,
+            "actual_consumer_count": len(consumer_sessions),
+            "produced_links": produced_links,
+            "consumed_results": consumed_results,
+            "failed_results": failed_results,
+        }
+        (output_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        _append_event(
+            event_log,
+            "research_finished",
+            ok=summary["ok"],
+            produced_count=summary["produced_count"],
+            consumed_count=summary["consumed_count"],
+            failed_count=summary["failed_count"],
+        )
+    finally:
+        if created_sessions and not args.keep_sessions:
+            closed_sessions = _research_close_sessions(client, created_sessions, event_log)
+            summary_path = output_dir / "summary.json"
+            if summary_path.exists():
+                summary = _load_summary_file(summary_path) or {}
+                if summary:
+                    summary["session_cleanup"] = closed_sessions
+                    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    summary = _load_summary_file(output_dir / "summary.json")
+    if not summary:
+        _failure(
+            "research.knowledge",
+            "summary_missing",
+            "Research run finished without producing summary.json.",
+            output_dir=str(output_dir),
+        )
+    _json_dump(summary, exit_code=0 if summary.get("ok") else 1)
 
 
 def _validate_case_spec(spec: dict[str, Any]) -> list[str]:
@@ -1745,6 +2232,55 @@ def build_parser() -> argparse.ArgumentParser:
     run_cleanup.add_argument("--batch-id", help="Batch id under the local runs root")
     run_cleanup.add_argument("--batch-dir", help="Explicit path to a batch directory")
     run_cleanup.set_defaults(func=cmd_run_cleanup)
+
+    research = subparsers.add_parser("research", help="Run built-in streaming research templates")
+    research_subparsers = research.add_subparsers(dest="research_command", required=True)
+
+    research_knowledge = research_subparsers.add_parser(
+        "knowledge",
+        help="One producer browser searches and streams links to multiple consumer browsers for content capture",
+    )
+    research_knowledge.add_argument("--query", required=True, help="Search query used by the producer browser")
+    research_knowledge.add_argument("--max-links", type=int, default=100, help="Maximum number of result links to enqueue")
+    research_knowledge.add_argument("--consumer-count", type=int, default=4, help="Number of consumer browsers to run in parallel")
+    research_knowledge.add_argument("--queue-size", type=int, default=20, help="Maximum buffered links between producer and consumers")
+    research_knowledge.add_argument("--search-engine", default="bing", choices=["bing", "google", "duckduckgo"])
+    research_knowledge.add_argument(
+        "--search-url-template",
+        help="Optional URL template with {query}, {offset}, and {page}; overrides the selected engine default",
+    )
+    research_knowledge.add_argument(
+        "--result-selector",
+        help="Optional CSS selector for result links; overrides the selected engine default",
+    )
+    research_knowledge.add_argument("--page-size", type=int, default=10, help="Offset increment between search result pages")
+    research_knowledge.add_argument("--search-pages-max", type=int, default=20, help="Maximum number of search result pages to scan")
+    research_knowledge.add_argument("--producer-browser-mode", default="normal", type=_normalize_browser_mode)
+    research_knowledge.add_argument("--consumer-browser-mode", default="normal", type=_normalize_browser_mode)
+    research_knowledge.add_argument(
+        "--search-wait-until",
+        default="domcontentloaded",
+        choices=["commit", "domcontentloaded", "load", "networkidle"],
+    )
+    research_knowledge.add_argument(
+        "--page-wait-until",
+        default="domcontentloaded",
+        choices=["commit", "domcontentloaded", "load", "networkidle"],
+    )
+    research_knowledge.add_argument("--search-timeout-ms", type=float, default=30000)
+    research_knowledge.add_argument("--page-timeout-ms", type=float, default=30000)
+    research_knowledge.add_argument("--content-selector", default="body", help="Selector consumers wait for before snapshotting")
+    research_knowledge.add_argument(
+        "--content-wait-state",
+        default="visible",
+        choices=["attached", "detached", "hidden", "visible"],
+    )
+    research_knowledge.add_argument("--max-chars", type=int, default=8000, help="Maximum HTML/text chars to persist per page")
+    research_knowledge.add_argument("--run-id", help="Optional explicit research run id")
+    research_knowledge.add_argument("--output-dir", help="Directory for links, page artifacts, logs, and summary output")
+    research_knowledge.add_argument("--screenshot", action="store_true", help="Capture a full-page screenshot for each consumed page")
+    research_knowledge.add_argument("--keep-sessions", action="store_true", help="Keep producer and consumer sessions open after the run")
+    research_knowledge.set_defaults(func=cmd_research_knowledge)
 
     prepare = subparsers.add_parser("prepare", help="Backward-compatible alias for session create")
     prepare.add_argument("--context-id", help="Reuse an existing context")

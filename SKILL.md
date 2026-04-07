@@ -100,6 +100,7 @@ This returns JSON with:
 9. Use `case validate` and `case run` when the task is a repeatable multi-step flow that should live in a file instead of a one-off terminal command.
 10. Use `run submit/list/summary/watch/retry` when the user wants to launch the same case multiple times, inspect batch-level status, quickly understand local run results, or rerun failed batches.
 11. Only use `direct-url` when the user explicitly wants the quick shared-browser connection method from `wss://.../connection`.
+12. Use `research knowledge` when the task is knowledge gathering from search engines with one producer browser generating links and multiple consumer browsers capturing page content in parallel.
 
 ## Commands
 
@@ -143,6 +144,11 @@ This returns JSON with:
 - `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run watch --batch-id <batch_id> --expected-count 5`
 - `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run watch --batch-id <batch_id> --live --changes-only`
 - `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run retry --batch-id <batch_id>`
+
+### Research templates
+
+- `~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py research knowledge --query "browser automation" --max-links 100 --consumer-count 6`
+- `research knowledge` creates one producer browser for search result pages and multiple consumer browsers that stream-capture result page content into a local run directory.
 
 ### Compatibility and direct connection
 
