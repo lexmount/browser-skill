@@ -66,6 +66,7 @@ The `research knowledge` command turns the skill into a producer/consumer browse
 
 - one producer browser opens search result pages and keeps enqueueing links
 - multiple consumer browsers pull links from the queue in parallel
+- each consumer processes every URL in a fresh page to avoid cross-site navigation interference
 - each consumer stores `page.json` artifacts with title, URL, HTML excerpt, and text excerpt
 - optional screenshots can be captured with `--screenshot`
 - producer-side search page failures are recorded and skipped instead of aborting the whole run

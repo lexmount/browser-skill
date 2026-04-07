@@ -66,9 +66,6 @@ def _print_research_terminal_summary(summary: dict[str, Any]) -> None:
     lines = [
         "",
         "=== Research Summary ===",
-        f"Visited URLs: {summary.get('visited_count', 0)}",
-        f"Success Pages: {summary.get('success_count', 0)}",
-        f"Failed Pages: {summary.get('failure_count', 0)}",
         "Downloaded HTML Files:",
     ]
 
@@ -78,6 +75,7 @@ def _print_research_terminal_summary(summary: dict[str, Any]) -> None:
             lines.append(str(path))
     else:
         lines.append("(none)")
+    lines.append(f"Success Pages: {summary.get('success_count', 0)}")
 
     print("\n".join(lines))
 
@@ -965,7 +963,6 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                 browser = playwright.chromium.connect_over_cdp(connect_url)
                 try:
                     context = browser.contexts[0] if browser.contexts else browser.new_context()
-                    page = _get_or_create_page(context)
                     while True:
                         item = link_queue.get()
                         if item is None:
@@ -984,6 +981,7 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                         _terminal_log(
                             f"[consumer-{consumer_index}] consume rank={item.get('rank')} url={item.get('url')}"
                         )
+                        page = context.new_page()
                         try:
                             result = _research_capture_page(page, item, output_dir, args)
                             result["ok"] = True
@@ -1033,6 +1031,10 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                                 f"url={item.get('url')} error={exc.__class__.__name__}: {exc}"
                             )
                         finally:
+                            try:
+                                page.close()
+                            except Exception:
+                                pass
                             link_queue.task_done()
                 finally:
                     browser.close()
