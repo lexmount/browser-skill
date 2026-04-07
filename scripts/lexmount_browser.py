@@ -61,6 +61,26 @@ def _json_dump(payload: Dict[str, Any], exit_code: int = 0) -> None:
     raise SystemExit(exit_code)
 
 
+def _print_research_terminal_summary(summary: dict[str, Any]) -> None:
+    lines = [
+        "",
+        "=== Research Summary ===",
+        f"Visited URLs: {summary.get('visited_count', 0)}",
+        f"Success Pages: {summary.get('success_count', 0)}",
+        f"Failed Pages: {summary.get('failure_count', 0)}",
+        "Downloaded HTML Files:",
+    ]
+
+    html_paths = summary.get("success_html_paths") or []
+    if html_paths:
+        for path in html_paths:
+            lines.append(str(path))
+    else:
+        lines.append("(none)")
+
+    print("\n".join(lines), file=sys.stderr)
+
+
 def _success(command: str, **payload: Any) -> None:
     data = {"ok": True, "command": command}
     data.update(payload)
@@ -655,6 +675,107 @@ def _research_wait_for_results(page: "Page", selector: str, timeout_ms: float) -
     )
 
 
+def _research_try_extract_results(
+    page: "Page",
+    *,
+    result_selector: str,
+    timeout_ms: float,
+) -> tuple[int, list[dict[str, Any]]]:
+    extracted_count = _research_wait_for_results(page, result_selector, timeout_ms)
+    extracted = _research_extract_links(page, result_selector)
+    return max(len(extracted), extracted_count), extracted
+
+
+def _research_load_search_results(
+    page: "Page",
+    *,
+    search_url: str,
+    result_selector: str,
+    wait_until: str,
+    timeout_ms: float,
+) -> tuple[int, list[dict[str, Any]], dict[str, Any]]:
+    timeout_ms = float(timeout_ms)
+    metadata: dict[str, Any] = {
+        "search_url": search_url,
+        "attempts": [],
+        "recovered_from_navigation_error": False,
+    }
+
+    try:
+        page.goto(search_url, wait_until=wait_until, timeout=timeout_ms)
+        count, extracted = _research_try_extract_results(page, result_selector=result_selector, timeout_ms=timeout_ms)
+        metadata["attempts"].append(
+            {
+                "phase": "initial",
+                "status": "ok",
+                "timeout_ms": timeout_ms,
+                "result_count": count,
+            }
+        )
+        return count, extracted, metadata
+    except Exception as exc:
+        metadata["attempts"].append(
+            {
+                "phase": "initial",
+                "status": "error",
+                "timeout_ms": timeout_ms,
+                "error": exc.__class__.__name__,
+                "message": str(exc),
+            }
+        )
+
+        try:
+            count, extracted = _research_try_extract_results(page, result_selector=result_selector, timeout_ms=1500)
+            metadata["recovered_from_navigation_error"] = True
+            metadata["attempts"].append(
+                {
+                    "phase": "recover-current-dom",
+                    "status": "ok",
+                    "timeout_ms": 1500,
+                    "result_count": count,
+                }
+            )
+            return count, extracted, metadata
+        except Exception as recover_exc:
+            metadata["attempts"].append(
+                {
+                    "phase": "recover-current-dom",
+                    "status": "error",
+                    "timeout_ms": 1500,
+                    "error": recover_exc.__class__.__name__,
+                    "message": str(recover_exc),
+                }
+            )
+
+        retry_timeout_ms = max(timeout_ms * 1.5, timeout_ms + 10000)
+        page.wait_for_timeout(1500)
+        try:
+            page.goto(search_url, wait_until=wait_until, timeout=retry_timeout_ms)
+            count, extracted = _research_try_extract_results(page, result_selector=result_selector, timeout_ms=retry_timeout_ms)
+            metadata["attempts"].append(
+                {
+                    "phase": "retry",
+                    "status": "ok",
+                    "timeout_ms": retry_timeout_ms,
+                    "result_count": count,
+                }
+            )
+            return count, extracted, metadata
+        except Exception as retry_exc:
+            metadata["attempts"].append(
+                {
+                    "phase": "retry",
+                    "status": "error",
+                    "timeout_ms": retry_timeout_ms,
+                    "error": retry_exc.__class__.__name__,
+                    "message": str(retry_exc),
+                }
+            )
+            raise RuntimeError(
+                "Failed to load search results after initial attempt, DOM recovery, and one retry."
+            ) from retry_exc
+
+
 def _research_capture_page(
     page: "Page",
     item: dict[str, Any],
@@ -930,9 +1051,22 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                     )
 
                     try:
-                        page.goto(search_url, wait_until=args.search_wait_until, timeout=args.search_timeout_ms)
-                        extracted_count = _research_wait_for_results(page, result_selector, args.search_timeout_ms)
-                        extracted = _research_extract_links(page, result_selector)
+                        extracted_count, extracted, load_meta = _research_load_search_results(
+                            page,
+                            search_url=search_url,
+                            result_selector=result_selector,
+                            wait_until=args.search_wait_until,
+                            timeout_ms=args.search_timeout_ms,
+                        )
+                        _append_event(
+                            event_log,
+                            "producer_page_load_result",
+                            page_index=page_index + 1,
+                            offset=offset,
+                            search_url=search_url,
+                            recovered_from_navigation_error=load_meta.get("recovered_from_navigation_error"),
+                            attempts=load_meta.get("attempts"),
+                        )
 
                         accepted_on_page = 0
                         for entry in extracted:
@@ -1087,6 +1221,7 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
             "Research run finished without producing summary.json.",
             output_dir=str(output_dir),
         )
+    _print_research_terminal_summary(summary)
     _json_dump(summary, exit_code=0 if summary.get("ok") else 1)
 
 
