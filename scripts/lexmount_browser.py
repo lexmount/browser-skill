@@ -50,6 +50,7 @@ ANSI_GREEN = "\033[32m"
 ANSI_YELLOW = "\033[33m"
 ANSI_BLUE = "\033[34m"
 ANSI_CYAN = "\033[36m"
+TERMINAL_LOG_LOCK = threading.Lock()
 
 
 def _missing_env_vars() -> list[str]:
@@ -78,7 +79,12 @@ def _print_research_terminal_summary(summary: dict[str, Any]) -> None:
     else:
         lines.append("(none)")
 
-    print("\n".join(lines), file=sys.stderr)
+    print("\n".join(lines))
+
+
+def _terminal_log(message: str) -> None:
+    with TERMINAL_LOG_LOCK:
+        print(message, file=sys.stderr, flush=True)
 
 
 def _success(command: str, **payload: Any) -> None:
@@ -953,6 +959,7 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                 consumer_index=consumer_index,
                 session_id=session_info.get("session_id"),
             )
+            _terminal_log(f"[consumer-{consumer_index}] started session={session_info.get('session_id')}")
 
             with sync_playwright() as playwright:
                 browser = playwright.chromium.connect_over_cdp(connect_url)
@@ -964,6 +971,7 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                         if item is None:
                             link_queue.task_done()
                             _append_event(event_log, "consumer_stopped", consumer_index=consumer_index)
+                            _terminal_log(f"[consumer-{consumer_index}] stopped")
                             break
 
                         _append_event(
@@ -972,6 +980,9 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                             consumer_index=consumer_index,
                             rank=item.get("rank"),
                             url=item.get("url"),
+                        )
+                        _terminal_log(
+                            f"[consumer-{consumer_index}] consume rank={item.get('rank')} url={item.get('url')}"
                         )
                         try:
                             result = _research_capture_page(page, item, output_dir, args)
@@ -989,6 +1000,10 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                                 url=result.get("url"),
                                 ok=True,
                                 duration_ms=result.get("duration_ms"),
+                            )
+                            _terminal_log(
+                                f"[consumer-{consumer_index}] success rank={result.get('rank')} "
+                                f"url={result.get('url')} html={result.get('html_path')}"
                             )
                         except Exception as exc:
                             failure = {
@@ -1012,6 +1027,10 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                                 ok=False,
                                 error=exc.__class__.__name__,
                                 message=str(exc),
+                            )
+                            _terminal_log(
+                                f"[consumer-{consumer_index}] failed rank={item.get('rank')} "
+                                f"url={item.get('url')} error={exc.__class__.__name__}: {exc}"
                             )
                         finally:
                             link_queue.task_done()
@@ -1095,6 +1114,9 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                                 url=normalized,
                                 search_page=page_index + 1,
                             )
+                            _terminal_log(
+                                f"[producer] enqueue rank={rank} page={page_index + 1} url={normalized}"
+                            )
                             link_queue.put(item)
                             if rank >= args.max_links:
                                 break
@@ -1135,6 +1157,10 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                             search_url=search_url,
                             error=exc.__class__.__name__,
                             message=str(exc),
+                        )
+                        _terminal_log(
+                            f"[producer] page_failed page={page_index + 1} search_url={search_url} "
+                            f"error={exc.__class__.__name__}: {exc}"
                         )
                         continue
             finally:
@@ -1222,7 +1248,7 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
             output_dir=str(output_dir),
         )
     _print_research_terminal_summary(summary)
-    _json_dump(summary, exit_code=0 if summary.get("ok") else 1)
+    raise SystemExit(0 if summary.get("ok") else 1)
 
 
 def _validate_case_spec(spec: dict[str, Any]) -> list[str]:
