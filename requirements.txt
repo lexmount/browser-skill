@@ -1,4 +1,4 @@
-lexmount
+lexmount>=0.4.6
 playwright
 httpx
 python-dotenv
