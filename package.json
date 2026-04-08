@@ -1,8 +1,12 @@
 {
   "name": "@lexmount/browser-skill-installer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Installer for the Lexmount Codex browser skill",
   "type": "module",
+  "scripts": {
+    "release:npm": "python ./scripts/publish-npm.py",
+    "release:npm:check": "python ./scripts/publish-npm.py --skip-publish"
+  },
   "bin": {
     "lexmount-browser-skill-install": "./tools/install-skill.mjs"
   },
@@ -12,9 +16,23 @@
     "lexmount",
     "browser"
   ],
+  "author": {
+    "name": "Lexmount Team",
+    "email": "jiawei.li@lexmount.com"
+  },
   "license": "MIT",
+  "homepage": "https://github.com/lexmount/browser-skill",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lexmount/browser-skill"
+  },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "provenance": false
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
     "cos-nodejs-sdk-v5": "^2.15.4",
@@ -30,6 +48,7 @@
     "examples/retry-demo-fail.json",
     "scripts/lexmount_browser.py",
     "tools/install-skill.mjs",
+    "tools/install-skill-win.mjs",
     "tools/upload-package-to-cos.mjs",
     "tools/upload-package-to-cos.py"
   ]

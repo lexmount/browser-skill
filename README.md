@@ -121,8 +121,7 @@ For local development, install into Codex by linking or copying this folder into
 
 - `~/.codex/skills/lexmount-browser`
 
-If this folder is later published as an npm package, the installer entrypoint can
-be invoked with:
+The npm package installer entrypoint can be invoked with:
 
 ```bash
 npx @lexmount/browser-skill-installer
@@ -130,11 +129,13 @@ npx @lexmount/browser-skill-installer
 
 ## Publish path
 
-To make the install experience look like a one-line CLI install:
+This package is published as:
 
-1. Publish this folder as the npm package `@lexmount/browser-skill-installer`
-2. Ensure the package contains `SKILL.md`, `REFERENCE.md`, `scripts/`, and `tools/install-skill.mjs`
-3. Users run:
+- npm package: `@lexmount/browser-skill-installer`
+
+The published package contains `SKILL.md`, `REFERENCE.md`, `scripts/`, and `tools/install-skill.mjs`.
+
+Users run:
 
 ```bash
 npx @lexmount/browser-skill-installer
@@ -144,6 +145,21 @@ The installer copies the skill into:
 
 ```text
 ~/.codex/skills/lexmount-browser
+```
+
+## npm release workflow
+
+The npm publish flow matches the Lexmount JS SDK release pattern:
+
+1. bump `package.json` to a new unpublished version
+2. push the commit and tag
+3. create and publish a GitHub Release
+4. GitHub Actions workflow `publish.yml` validates the package and publishes it to npm via trusted publishing
+
+Local validation entrypoint:
+
+```bash
+npm run release:npm:check
 ```
 
 ## COS publish
