@@ -954,13 +954,13 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
     )
 
     try:
-        creation_jobs = [{"role": "producer", "browser_mode": args.producer_browser_mode}]
+        creation_jobs = [{"role": "producer", "browser_mode": "normal"}]
         for index in range(args.consumer_count):
             creation_jobs.append(
                 {
                     "role": "consumer",
                     "consumer_index": index + 1,
-                    "browser_mode": args.consumer_browser_mode,
+                    "browser_mode": args.browser_mode,
                 }
             )
 
@@ -2650,8 +2650,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     research_knowledge.add_argument("--page-size", type=int, default=10, help="Offset increment between search result pages")
     research_knowledge.add_argument("--search-pages-max", type=int, default=20, help="Maximum number of search result pages to scan")
-    research_knowledge.add_argument("--producer-browser-mode", default="normal", type=_normalize_browser_mode)
-    research_knowledge.add_argument("--consumer-browser-mode", default="normal", type=_normalize_browser_mode)
+    research_knowledge.add_argument(
+        "--browser-mode",
+        default="normal",
+        choices=["normal", "light"],
+        help="Consumer browser mode only; producer always uses normal",
+    )
     research_knowledge.add_argument(
         "--search-wait-until",
         default="domcontentloaded",
