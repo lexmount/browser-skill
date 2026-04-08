@@ -92,7 +92,8 @@ Important parameters:
 - `--max-links`: how many search result links to stream to consumers
 - `--min-success-pages`: keep producing beyond `--max-links` until this many pages succeed, unless search pages are exhausted
 - `--consumer-count`: number of consumer browsers
-- `--search-engine`: built-in defaults for `bing`, `google`, or `duckduckgo`
+- `--search-engine`: built-in defaults for `bing`, `google`, `baidu`, or `duckduckgo`
+- `--fallback-search-engines`: comma-separated fallback engines; default is `baidu`, so producer starts with Bing and falls back when needed
 - `--search-url-template`: optional custom search URL template using `{query}`, `{offset}`, and `{page}`
 - `--result-selector`: optional CSS selector for result links
 - `--keep-sessions`: keep sessions open instead of closing them automatically

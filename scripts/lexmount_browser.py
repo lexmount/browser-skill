@@ -589,6 +589,12 @@ def _research_engine_defaults(engine: str) -> dict[str, Any]:
             "offset_start": 0,
             "offset_step": 10,
         },
+        "baidu": {
+            "search_url_template": "https://www.baidu.com/s?wd={query}&pn={offset}",
+            "result_selector": "h3.t a, h3.c-title a",
+            "offset_start": 0,
+            "offset_step": 10,
+        },
         "duckduckgo": {
             "search_url_template": "https://html.duckduckgo.com/html/?q={query}&s={offset}",
             "result_selector": "a.result__a",
@@ -597,6 +603,50 @@ def _research_engine_defaults(engine: str) -> dict[str, Any]:
         },
     }
     return mapping[engine]
+
+
+def _research_engine_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
+    if args.search_url_template or args.result_selector:
+        defaults = _research_engine_defaults(args.search_engine)
+        return [
+            {
+                "engine": args.search_engine,
+                "search_url_template": args.search_url_template or defaults["search_url_template"],
+                "result_selector": args.result_selector or defaults["result_selector"],
+                "offset_start": defaults["offset_start"],
+                "offset_step": args.page_size if args.page_size > 0 else defaults["offset_step"],
+            }
+        ]
+
+    plan: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    raw_engines = [args.search_engine]
+    if args.fallback_search_engines:
+        raw_engines.extend(part.strip() for part in str(args.fallback_search_engines).split(","))
+
+    for engine in raw_engines:
+        if not engine or engine in seen:
+            continue
+        try:
+            defaults = _research_engine_defaults(engine)
+        except KeyError:
+            _failure(
+                "research.knowledge",
+                "invalid_fallback_search_engine",
+                f"Unsupported search engine '{engine}'.",
+                supported=["bing", "google", "baidu", "duckduckgo"],
+            )
+        plan.append(
+            {
+                "engine": engine,
+                "search_url_template": defaults["search_url_template"],
+                "result_selector": defaults["result_selector"],
+                "offset_start": defaults["offset_start"],
+                "offset_step": args.page_size if args.page_size > 0 else defaults["offset_step"],
+            }
+        )
+        seen.add(engine)
+    return plan
 
 
 def _research_output_dir(args: argparse.Namespace) -> tuple[str, Path]:
@@ -873,11 +923,7 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
     if args.min_success_pages < 0:
         _failure("research.knowledge", "invalid_min_success_pages", "--min-success-pages must be at least 0.")
 
-    defaults = _research_engine_defaults(args.search_engine)
-    search_url_template = args.search_url_template or defaults["search_url_template"]
-    result_selector = args.result_selector or defaults["result_selector"]
-    offset_start = defaults["offset_start"]
-    offset_step = args.page_size if args.page_size > 0 else defaults["offset_step"]
+    engine_plan = _research_engine_plan(args)
 
     client = _build_client()
     _, LexmountError, _ = _load_sdk()
@@ -1103,135 +1149,164 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
                 context = browser.contexts[0] if browser.contexts else browser.new_context()
                 page = _get_or_create_page(context)
                 rank = 0
+                producer_done = False
 
-                for page_index in range(args.search_pages_max):
-                    current_success_count = _current_research_success_count(results_lock, consumed_results)
-                    if rank >= args.max_links and current_success_count >= args.min_success_pages:
-                        break
-                    if rank >= args.max_links and current_success_count < args.min_success_pages:
-                        _terminal_log(
-                            f"[producer] continue beyond max-links={args.max_links} "
-                            f"because success_pages={current_success_count} < min_success_pages={args.min_success_pages}"
-                        )
+                for engine_entry in engine_plan:
+                    engine_name = str(engine_entry["engine"])
+                    search_url_template = str(engine_entry["search_url_template"])
+                    result_selector = str(engine_entry["result_selector"])
+                    offset_start = int(engine_entry["offset_start"])
+                    offset_step = int(engine_entry["offset_step"])
 
-                    offset = offset_start + (page_index * offset_step)
-                    search_url = search_url_template.format(
-                        query=quote_plus(args.query),
-                        offset=offset,
-                        page=page_index + 1,
-                    )
-                    _append_event(
-                        event_log,
-                        "producer_page_started",
-                        page_index=page_index + 1,
-                        offset=offset,
-                        search_url=search_url,
-                    )
+                    _terminal_log(f"[producer] search_engine={engine_name} started")
 
-                    try:
-                        extracted_count, extracted, load_meta = _research_load_search_results(
-                            page,
-                            search_url=search_url,
-                            result_selector=result_selector,
-                            wait_until=args.search_wait_until,
-                            timeout_ms=args.search_timeout_ms,
-                        )
-                        _append_event(
-                            event_log,
-                            "producer_page_load_result",
-                            page_index=page_index + 1,
-                            offset=offset,
-                            search_url=search_url,
-                            recovered_from_navigation_error=load_meta.get("recovered_from_navigation_error"),
-                            attempts=load_meta.get("attempts"),
-                        )
-
-                        accepted_on_page = 0
-                        for entry in extracted:
-                            normalized = _normalize_web_url(str(entry.get("href") or ""))
-                            if not normalized or normalized in seen_urls:
-                                continue
-
-                            seen_urls.add(normalized)
-                            rank += 1
-                            accepted_on_page += 1
-                            item = {
-                                "rank": rank,
-                                "url": normalized,
-                                "title": str(entry.get("text") or "").strip(),
-                                "search_page": page_index + 1,
-                                "search_offset": offset,
-                                "search_url": search_url,
-                            }
-                            produced_links.append(item)
-                            with links_log.open("a", encoding="utf-8") as fh:
-                                fh.write(json.dumps(item, ensure_ascii=False) + "\n")
-                            _append_event(
-                                event_log,
-                                "producer_link_enqueued",
-                                rank=rank,
-                                url=normalized,
-                                search_page=page_index + 1,
-                            )
+                    for page_index in range(args.search_pages_max):
+                        current_success_count = _current_research_success_count(results_lock, consumed_results)
+                        if rank >= args.max_links and current_success_count >= args.min_success_pages:
+                            producer_done = True
+                            break
+                        if rank >= args.max_links and current_success_count < args.min_success_pages:
                             _terminal_log(
-                                f"[producer] enqueue rank={rank} page={page_index + 1} url={normalized}"
+                                f"[producer] continue beyond max-links={args.max_links} "
+                                f"because success_pages={current_success_count} < min_success_pages={args.min_success_pages}"
                             )
-                            link_queue.put(item)
-                            current_success_count = _current_research_success_count(results_lock, consumed_results)
-                            if rank >= args.max_links and current_success_count >= args.min_success_pages:
-                                break
 
+                        offset = offset_start + (page_index * offset_step)
+                        search_url = search_url_template.format(
+                            query=quote_plus(args.query),
+                            offset=offset,
+                            page=page_index + 1,
+                        )
                         _append_event(
                             event_log,
-                            "producer_page_finished",
+                            "producer_page_started",
+                            engine=engine_name,
                             page_index=page_index + 1,
                             offset=offset,
-                            extracted_count=max(len(extracted), extracted_count),
-                            accepted_count=accepted_on_page,
-                            total_produced=rank,
+                            search_url=search_url,
                         )
 
-                        if accepted_on_page == 0 and not extracted:
-                            current_success_count = _current_research_success_count(results_lock, consumed_results)
+                        try:
+                            extracted_count, extracted, load_meta = _research_load_search_results(
+                                page,
+                                search_url=search_url,
+                                result_selector=result_selector,
+                                wait_until=args.search_wait_until,
+                                timeout_ms=args.search_timeout_ms,
+                            )
                             _append_event(
                                 event_log,
-                                "producer_page_empty",
+                                "producer_page_load_result",
+                                engine=engine_name,
                                 page_index=page_index + 1,
                                 offset=offset,
                                 search_url=search_url,
-                                success_pages=current_success_count,
-                                min_success_pages=args.min_success_pages,
+                                recovered_from_navigation_error=load_meta.get("recovered_from_navigation_error"),
+                                attempts=load_meta.get("attempts"),
                             )
-                            if current_success_count >= args.min_success_pages:
+
+                            accepted_on_page = 0
+                            for entry in extracted:
+                                normalized = _normalize_web_url(str(entry.get("href") or ""))
+                                if not normalized or normalized in seen_urls:
+                                    continue
+
+                                seen_urls.add(normalized)
+                                rank += 1
+                                accepted_on_page += 1
+                                item = {
+                                    "rank": rank,
+                                    "url": normalized,
+                                    "title": str(entry.get("text") or "").strip(),
+                                    "search_engine": engine_name,
+                                    "search_page": page_index + 1,
+                                    "search_offset": offset,
+                                    "search_url": search_url,
+                                }
+                                produced_links.append(item)
+                                with links_log.open("a", encoding="utf-8") as fh:
+                                    fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+                                _append_event(
+                                    event_log,
+                                    "producer_link_enqueued",
+                                    engine=engine_name,
+                                    rank=rank,
+                                    url=normalized,
+                                    search_page=page_index + 1,
+                                )
+                                _terminal_log(
+                                    f"[producer] engine={engine_name} enqueue rank={rank} "
+                                    f"page={page_index + 1} url={normalized}"
+                                )
+                                link_queue.put(item)
+                                current_success_count = _current_research_success_count(results_lock, consumed_results)
+                                if rank >= args.max_links and current_success_count >= args.min_success_pages:
+                                    producer_done = True
+                                    break
+
+                            _append_event(
+                                event_log,
+                                "producer_page_finished",
+                                engine=engine_name,
+                                page_index=page_index + 1,
+                                offset=offset,
+                                extracted_count=max(len(extracted), extracted_count),
+                                accepted_count=accepted_on_page,
+                                total_produced=rank,
+                            )
+
+                            if producer_done:
                                 break
+
+                            if accepted_on_page == 0 and not extracted:
+                                current_success_count = _current_research_success_count(results_lock, consumed_results)
+                                _append_event(
+                                    event_log,
+                                    "producer_page_empty",
+                                    engine=engine_name,
+                                    page_index=page_index + 1,
+                                    offset=offset,
+                                    search_url=search_url,
+                                    success_pages=current_success_count,
+                                    min_success_pages=args.min_success_pages,
+                                )
+                                if current_success_count >= args.min_success_pages:
+                                    producer_done = True
+                                    break
+                                _terminal_log(
+                                    f"[producer] engine={engine_name} page_empty page={page_index + 1}; "
+                                    f"switching engine because success_pages={current_success_count} "
+                                    f"< min_success_pages={args.min_success_pages}"
+                                )
+                                break
+                        except Exception as exc:
+                            failure = {
+                                "engine": engine_name,
+                                "page_index": page_index + 1,
+                                "offset": offset,
+                                "search_url": search_url,
+                                "error": exc.__class__.__name__,
+                                "message": str(exc),
+                            }
+                            producer_failures.append(failure)
+                            _append_event(
+                                event_log,
+                                "producer_page_failed",
+                                engine=engine_name,
+                                page_index=page_index + 1,
+                                offset=offset,
+                                search_url=search_url,
+                                error=exc.__class__.__name__,
+                                message=str(exc),
+                            )
                             _terminal_log(
-                                f"[producer] page_empty page={page_index + 1} but continuing because "
-                                f"success_pages={current_success_count} < min_success_pages={args.min_success_pages}"
+                                f"[producer] engine={engine_name} page_failed page={page_index + 1} "
+                                f"search_url={search_url} error={exc.__class__.__name__}: {exc}"
                             )
                             continue
-                    except Exception as exc:
-                        failure = {
-                            "page_index": page_index + 1,
-                            "offset": offset,
-                            "search_url": search_url,
-                            "error": exc.__class__.__name__,
-                            "message": str(exc),
-                        }
-                        producer_failures.append(failure)
-                        _append_event(
-                            event_log,
-                            "producer_page_failed",
-                            page_index=page_index + 1,
-                            offset=offset,
-                            search_url=search_url,
-                            error=exc.__class__.__name__,
-                            message=str(exc),
-                        )
-                        _terminal_log(
-                            f"[producer] page_failed page={page_index + 1} search_url={search_url} "
-                            f"error={exc.__class__.__name__}: {exc}"
-                        )
-                        continue
+
+                    if producer_done:
+                        break
             finally:
                 browser.close()
 
@@ -1263,8 +1338,7 @@ def cmd_research_knowledge(args: argparse.Namespace) -> None:
             "run_id": run_id,
             "query": args.query,
             "search_engine": args.search_engine,
-            "search_url_template": search_url_template,
-            "result_selector": result_selector,
+            "search_engines_used": [entry["engine"] for entry in engine_plan],
             "output_dir": str(output_dir),
             "events_path": str(event_log),
             "links_path": str(links_log),
@@ -2560,7 +2634,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     research_knowledge.add_argument("--consumer-count", type=int, default=4, help="Number of consumer browsers to run in parallel")
     research_knowledge.add_argument("--queue-size", type=int, default=20, help="Maximum buffered links between producer and consumers")
-    research_knowledge.add_argument("--search-engine", default="bing", choices=["bing", "google", "duckduckgo"])
+    research_knowledge.add_argument("--search-engine", default="bing", choices=["bing", "google", "baidu", "duckduckgo"])
+    research_knowledge.add_argument(
+        "--fallback-search-engines",
+        default="baidu",
+        help="Comma-separated fallback search engines used when the primary engine cannot produce enough useful links; ignored when custom search URL or selector is supplied",
+    )
     research_knowledge.add_argument(
         "--search-url-template",
         help="Optional URL template with {query}, {offset}, and {page}; overrides the selected engine default",
