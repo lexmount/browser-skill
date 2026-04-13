@@ -53,7 +53,9 @@ function openPromptStreams() {
   return {
     input,
     output,
-    close() {},
+    close() {
+      input.pause();
+    },
   };
 }
 
@@ -65,7 +67,11 @@ function finalizeTerminal() {
 
 async function promptConfig() {
   const streams = openPromptStreams();
-  const rl = readline.createInterface({ input: streams.input, output: streams.output });
+  const rl = readline.createInterface({
+    input: streams.input,
+    output: streams.output,
+    terminal: Boolean(streams.output.isTTY),
+  });
 
   try {
     streams.output.write("Lexmount skill setup (Windows)\n");

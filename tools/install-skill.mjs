@@ -50,6 +50,16 @@ function envFileContent(config) {
 }
 
 function openPromptStreams() {
+  if (input.isTTY && output.isTTY) {
+    return {
+      input,
+      output,
+      close() {
+        input.pause();
+      },
+    };
+  }
+
   try {
     const ttyInput = fs.createReadStream("/dev/tty");
     const ttyOutput = fs.createWriteStream("/dev/tty");
@@ -78,7 +88,11 @@ function finalizeTerminal() {
 
 async function promptConfig() {
   const streams = openPromptStreams();
-  const rl = readline.createInterface({ input: streams.input, output: streams.output });
+  const rl = readline.createInterface({
+    input: streams.input,
+    output: streams.output,
+    terminal: Boolean(streams.output.isTTY),
+  });
 
   try {
     streams.output.write("Lexmount skill setup\n");
