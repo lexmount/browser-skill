@@ -10,6 +10,11 @@ Main entry:
 The implementation prefers the local `lexmount-python-sdk` in this workspace and
 supports the direct shared-browser websocket form as a fallback.
 
+If session creation hits the platform's active browser/session cap, the helper
+returns a structured JSON error with a dedicated `browser_parallel_limit_reached`
+error code, an explicit Chinese message that the browser parallel quota is full,
+and the original SDK `status_code` plus `response` for debugging.
+
 ## Runtime commands
 
 During `npx` installation, the installer can create the skill-local virtual environment for you.

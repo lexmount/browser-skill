@@ -213,8 +213,42 @@ def _serialize_context(item: Any) -> dict[str, Any]:
     }
 
 
+def _normalize_sdk_error(exc: Exception) -> tuple[str, str, dict[str, Any]]:
+    status_code = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    normalized: dict[str, Any] = {}
+
+    if status_code is not None:
+        normalized["status_code"] = status_code
+    if response is not None:
+        normalized["response"] = response
+
+    message = str(exc)
+    error = exc.__class__.__name__
+
+    if status_code == 429:
+        response_text = ""
+        if isinstance(response, dict):
+            response_text = json.dumps(response, ensure_ascii=False)
+        elif response is not None:
+            response_text = str(response)
+        combined = f"{message} {response_text}".lower()
+        if (
+            "active session limit reached" in combined
+            or "parallel" in combined
+            or "并行额度" in combined
+            or "额度到达上限" in combined
+            or "额度已达上限" in combined
+        ):
+            error = "browser_parallel_limit_reached"
+            message = "浏览器并行额度已达上限，当前无法创建新的 browser，请先关闭部分 session 后重试。"
+
+    return error, message, normalized
+
+
 def _handle_sdk_error(command: str, exc: Exception, **payload: Any) -> None:
-    _failure(command, exc.__class__.__name__, str(exc), **payload)
+    error, message, normalized = _normalize_sdk_error(exc)
+    _failure(command, error, message, **normalized, **payload)
 
 
 def _resolve_session(client: "Lexmount", session_id: str) -> Any:

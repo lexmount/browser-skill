@@ -166,6 +166,7 @@ This returns JSON with:
 - Return structured JSON to the caller instead of prose when using the helper script.
 - If the SDK import fails, tell the user that `lexmount-python-sdk` or its Python dependencies are not ready in the current environment.
 - If credentials are missing, report which environment variable is absent.
+- If session creation hits the platform parallel browser/session limit, return a structured `browser_parallel_limit_reached` error and make the message explicit that the browser parallel quota is full.
 
 ## Validation note
 
