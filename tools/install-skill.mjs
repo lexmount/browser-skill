@@ -58,7 +58,7 @@ function openPromptStreams() {
       output: ttyOutput,
       close() {
         ttyInput.destroy();
-        ttyOutput.end();
+        ttyOutput.destroy();
       },
     };
   } catch {
@@ -67,6 +67,12 @@ function openPromptStreams() {
       output,
       close() {},
     };
+  }
+}
+
+function finalizeTerminal() {
+  if (output.isTTY) {
+    output.write("\n");
   }
 }
 
@@ -158,6 +164,7 @@ async function main() {
   console.log("");
   console.log("You can update these values later by editing that file.");
   console.log("Restart Codex to ensure the new skill is discovered.");
+  finalizeTerminal();
 }
 
 main().catch((error) => {

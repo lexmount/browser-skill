@@ -57,6 +57,12 @@ function openPromptStreams() {
   };
 }
 
+function finalizeTerminal() {
+  if (output.isTTY) {
+    output.write("\n");
+  }
+}
+
 async function promptConfig() {
   const streams = openPromptStreams();
   const rl = readline.createInterface({ input: streams.input, output: streams.output });
@@ -142,6 +148,7 @@ async function main() {
   }
 
   console.log(`Installed skill to ${targetDir}`);
+  finalizeTerminal();
 }
 
 main().catch((error) => {
