@@ -108,10 +108,9 @@ def main() -> int:
     if sys.platform == "win32":
         run_step("Smoke checking Windows installer", [node, "./tools/install-skill-win.mjs", "--help"], root)
     run_step("Checking Windows installer syntax", [node, "--check", "./tools/install-skill-win.mjs"], root)
-    run_step("Checking Node uploader syntax", [node, "--check", "./tools/upload-package-to-cos.mjs"], root)
     run_step(
         "Checking Python helper syntax",
-        [python, "-m", "py_compile", "./scripts/lexmount_browser.py", "./tools/upload-package-to-cos.py"],
+        [python, "-m", "py_compile", "./scripts/lexmount_browser.py"],
         root,
     )
     run_step("Validating package contents", [npm, "pack", "--dry-run"], root)

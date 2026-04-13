@@ -35,7 +35,6 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "cos-nodejs-sdk-v5": "^2.15.4",
     "dotenv": "^17.2.3"
   },
   "files": [
@@ -48,8 +47,6 @@
     "examples/retry-demo-fail.json",
     "scripts/lexmount_browser.py",
     "tools/install-skill.mjs",
-    "tools/install-skill-win.mjs",
-    "tools/upload-package-to-cos.mjs",
-    "tools/upload-package-to-cos.py"
+    "tools/install-skill-win.mjs"
   ]
 }

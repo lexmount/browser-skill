@@ -166,21 +166,3 @@ Local validation entrypoint:
 ```bash
 npm run release:npm:check
 ```
-
-## COS publish
-
-To build the npm tarball and upload it to the public COS bucket:
-
-```bash
-npm install
-node tools/upload-package-to-cos.mjs
-```
-
-Default target:
-
-- bucket: `npm-1377899528`
-- region: `ap-nanjing`
-- prefix: `packages/`
-
-The script uploads both a versioned tarball and a `latest` tarball, then prints
-the public URL that can be used with `npx`.
