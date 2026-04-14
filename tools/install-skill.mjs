@@ -66,10 +66,38 @@ const ENVIRONMENTS = {
   },
 };
 
+function parseEnvFile(content) {
+  const values = {};
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    const value = line.slice(separatorIndex + 1).trim();
+    values[key] = value;
+  }
+
+  return values;
+}
+
 function detectExistingConfig() {
-  const apiKey = (process.env.LEXMOUNT_API_KEY || "").trim();
-  const projectId = (process.env.LEXMOUNT_PROJECT_ID || "").trim();
-  const rawBaseUrl = (process.env.LEXMOUNT_BASE_URL || "").trim();
+  const envPath = path.join(targetDir, ".env");
+  if (!fs.existsSync(envPath)) {
+    return null;
+  }
+
+  const envValues = parseEnvFile(fs.readFileSync(envPath, "utf8"));
+  const apiKey = (envValues.LEXMOUNT_API_KEY || "").trim();
+  const projectId = (envValues.LEXMOUNT_PROJECT_ID || "").trim();
+  const rawBaseUrl = (envValues.LEXMOUNT_BASE_URL || "").trim();
 
   if (!apiKey || !projectId) {
     return null;
@@ -82,6 +110,7 @@ function detectExistingConfig() {
     projectId,
     rawBaseUrl,
     environment,
+    envPath,
   };
 }
 
@@ -150,7 +179,8 @@ async function promptConfig() {
 
     if (existingConfig) {
       streams.output.write("\n");
-      streams.output.write("Detected existing Lexmount environment variables in the current shell.\n");
+      streams.output.write("Detected existing Lexmount skill configuration.\n");
+      streams.output.write(`  File: ${existingConfig.envPath}\n`);
       streams.output.write(`  Environment: ${ENVIRONMENTS[existingConfig.environment].label}\n`);
       streams.output.write(`  LEXMOUNT_API_KEY: ${existingConfig.apiKey}\n`);
       streams.output.write(`  LEXMOUNT_PROJECT_ID: ${existingConfig.projectId}\n`);

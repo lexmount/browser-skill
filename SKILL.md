@@ -12,7 +12,7 @@ Use this skill when the task needs a Lexmount remote browser for automation, deb
 ## Setup check
 
 During installation, the installer asks whether you are using `browser.lexmount.cn` or `browser.lexmount.com`.
-If `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID` already exist in the current shell, the installer can import them directly into the installed skill.
+If `~/.codex/skills/lexmount-browser/.env` already contains `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`, the installer can import them directly into the installed skill.
 
 API Keys pages:
 

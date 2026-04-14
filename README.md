@@ -26,8 +26,8 @@ npx @lexmount/browser-skill-installer
 The installer now:
 
 - asks you to choose `browser.lexmount.cn` or `browser.lexmount.com`
-- checks whether the current shell already has `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`
-- if existing values are found, asks whether to import them into the installed skill
+- checks whether `~/.codex/skills/lexmount-browser/.env` already has `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`
+- if existing values are found there, asks whether to import them into the installed skill
 - shows the matching API Keys page before falling back to manual entry
 
 API Keys pages:
