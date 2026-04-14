@@ -11,6 +11,14 @@ Use this skill when the task needs a Lexmount remote browser for automation, deb
 
 ## Setup check
 
+During installation, the installer asks whether you are using `browser.lexmount.cn` or `browser.lexmount.com`.
+If `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID` already exist in the current shell, the installer can import them directly into the installed skill.
+
+API Keys pages:
+
+- `https://browser.lexmount.cn/settings/api-keys`
+- `https://browser.lexmount.com/settings/api-keys`
+
 During `npx` installation, prefer confirming the prompt that creates the skill-local virtual environment and installs dependencies.
 
 If that step was skipped, initialize the installed skill manually:
@@ -54,7 +62,8 @@ Environment variables:
 
 - `LEXMOUNT_BASE_URL` is optional.
 
-Do not set `LEXMOUNT_BASE_URL` when using production credentials.
+- If you use `browser.lexmount.com`, set `LEXMOUNT_BASE_URL=https://api.lexmount.com`.
+- If you use `browser.lexmount.cn`, do not set `LEXMOUNT_BASE_URL`.
 
 Only set it for the office test environment:
 

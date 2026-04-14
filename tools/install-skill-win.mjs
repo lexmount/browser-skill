@@ -46,7 +46,43 @@ function envFileContent(config) {
     `LEXMOUNT_PROJECT_ID=${config.projectId}`,
   ];
 
+  if (config.baseUrl) {
+    lines.push(`LEXMOUNT_BASE_URL=${config.baseUrl}`);
+  }
+
   return `${lines.join("\n")}\n`;
+}
+
+const ENVIRONMENTS = {
+  cn: {
+    label: "browser.lexmount.cn",
+    apiKeysUrl: "https://browser.lexmount.cn/settings/api-keys",
+    baseUrl: "",
+  },
+  com: {
+    label: "browser.lexmount.com",
+    apiKeysUrl: "https://browser.lexmount.com/settings/api-keys",
+    baseUrl: "https://api.lexmount.com",
+  },
+};
+
+function detectExistingConfig() {
+  const apiKey = (process.env.LEXMOUNT_API_KEY || "").trim();
+  const projectId = (process.env.LEXMOUNT_PROJECT_ID || "").trim();
+  const rawBaseUrl = (process.env.LEXMOUNT_BASE_URL || "").trim();
+
+  if (!apiKey || !projectId) {
+    return null;
+  }
+
+  const environment = rawBaseUrl.includes(".com") ? "com" : "cn";
+
+  return {
+    apiKey,
+    projectId,
+    rawBaseUrl,
+    environment,
+  };
 }
 
 function openPromptStreams() {
@@ -75,15 +111,59 @@ async function promptConfig() {
 
   try {
     streams.output.write("Lexmount skill setup (Windows)\n");
-    const apiKey = (await rl.question("LEXMOUNT_API_KEY: ")).trim();
-    const projectId = (await rl.question("LEXMOUNT_PROJECT_ID: ")).trim();
+    streams.output.write("Choose environment:\n");
+    streams.output.write("  a. browser.lexmount.cn\n");
+    streams.output.write("  b. browser.lexmount.com\n");
+
+    let environmentAnswer = "";
+    while (!["a", "b"].includes(environmentAnswer)) {
+      environmentAnswer = (await rl.question("Environment [a/b]: ")).trim().toLowerCase();
+    }
+
+    const environment = environmentAnswer === "b" ? "com" : "cn";
+    const environmentConfig = ENVIRONMENTS[environment];
+    const existingConfig = detectExistingConfig();
+
+    let apiKey = "";
+    let projectId = "";
+
+    if (existingConfig) {
+      streams.output.write("\n");
+      streams.output.write("Detected existing Lexmount environment variables in the current shell.\n");
+      streams.output.write(`  Environment: ${ENVIRONMENTS[existingConfig.environment].label}\n`);
+      streams.output.write(`  LEXMOUNT_API_KEY: ${existingConfig.apiKey}\n`);
+      streams.output.write(`  LEXMOUNT_PROJECT_ID: ${existingConfig.projectId}\n`);
+      if (existingConfig.rawBaseUrl) {
+        streams.output.write(`  LEXMOUNT_BASE_URL: ${existingConfig.rawBaseUrl}\n`);
+      }
+
+      const importAnswer = (
+        await rl.question("Import this configuration into the installed skill? [Y/n]: ")
+      ).trim().toLowerCase();
+
+      if (importAnswer === "" || importAnswer === "y" || importAnswer === "yes") {
+        apiKey = existingConfig.apiKey;
+        projectId = existingConfig.projectId;
+      }
+    }
+
+    if (!apiKey || !projectId) {
+      streams.output.write("\n");
+      streams.output.write("Get your project_id and api_key from:\n");
+      streams.output.write(`  ${environmentConfig.apiKeysUrl}\n`);
+      apiKey = (await rl.question("LEXMOUNT_API_KEY: ")).trim();
+      projectId = (await rl.question("LEXMOUNT_PROJECT_ID: ")).trim();
+    }
+
     const installDepsAnswer = (
       await rl.question("Create ~/.codex/skills/lexmount-browser/.venv and install requirements now? [Y/n]: ")
     ).trim().toLowerCase();
 
     return {
+      environment,
       apiKey,
       projectId,
+      baseUrl: environmentConfig.baseUrl,
       installDeps: installDepsAnswer === "" || installDepsAnswer === "y" || installDepsAnswer === "yes",
     };
   } finally {

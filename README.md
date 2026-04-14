@@ -15,6 +15,32 @@ returns a structured JSON error with a dedicated `browser_parallel_limit_reached
 error code, an explicit Chinese message that the browser parallel quota is full,
 and the original SDK `status_code` plus `response` for debugging.
 
+## Installation flow
+
+Run:
+
+```bash
+npx @lexmount/browser-skill-installer
+```
+
+The installer now:
+
+- asks you to choose `browser.lexmount.cn` or `browser.lexmount.com`
+- checks whether the current shell already has `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`
+- if existing values are found, asks whether to import them into the installed skill
+- shows the matching API Keys page before falling back to manual entry
+
+API Keys pages:
+
+- `browser.lexmount.cn`: `https://browser.lexmount.cn/settings/api-keys`
+- `browser.lexmount.com`: `https://browser.lexmount.com/settings/api-keys`
+
+Environment output rules:
+
+- both environments write `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`
+- `browser.lexmount.com` also writes `LEXMOUNT_BASE_URL=https://api.lexmount.com`
+- `browser.lexmount.cn` does not write `LEXMOUNT_BASE_URL`
+
 ## Runtime commands
 
 During `npx` installation, the installer can create the skill-local virtual environment for you.
