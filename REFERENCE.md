@@ -6,13 +6,16 @@
 
 Use when the user explicitly wants the fast path and accepts a shared browser instance.
 
+This mode still connects to a specific region endpoint. For the default China region
+preset, the direct websocket format is:
+
 Format:
 
 ```text
 wss://api.lexmount.cn/connection?project_id=<project_id>&api_key=<api_key>
 ```
 
-If `LEXMOUNT_BASE_URL` points to another host, the helper derives the websocket base from it.
+If `LEXMOUNT_BASE_URL` points to another region endpoint, the helper derives the websocket base from it automatically.
 
 ### 2. SDK-based session
 
@@ -279,13 +282,16 @@ lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_br
 
 - `connect_url`
 
-## Environment
+## Region Configuration
 
 - `LEXMOUNT_API_KEY`
 - `LEXMOUNT_PROJECT_ID`
 - `LEXMOUNT_BASE_URL`
 
-`LEXMOUNT_BASE_URL` is optional. Do not set it for production credentials.
+`LEXMOUNT_BASE_URL` is optional.
+
+- If you use the `Global region` endpoint, set `LEXMOUNT_BASE_URL=https://api.lexmount.com`.
+- If you use the `China region` endpoint, do not set `LEXMOUNT_BASE_URL`.
 
 Only use it for the office test environment:
 

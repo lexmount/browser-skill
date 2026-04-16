@@ -11,13 +11,18 @@ Use this skill when the task needs a Lexmount remote browser for automation, deb
 
 ## Setup check
 
-During installation, the installer asks whether you are using `browser.lexmount.cn` or `browser.lexmount.com`.
+During installation, the installer asks you to choose a `region preset`.
+Current presets are:
+
+- `China region` -> `browser.lexmount.cn`
+- `Global region` -> `browser.lexmount.com`
+
 If `~/.codex/skills/lexmount-browser/.env` already contains `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`, the installer can import them directly into the installed skill.
 
 API Keys pages:
 
-- `https://browser.lexmount.cn/settings/api-keys`
-- `https://browser.lexmount.com/settings/api-keys`
+- `China region`: `https://browser.lexmount.cn/settings/api-keys`
+- `Global region`: `https://browser.lexmount.com/settings/api-keys`
 
 During `npx` installation, prefer confirming the prompt that creates the skill-local virtual environment and installs dependencies.
 
@@ -52,7 +57,7 @@ lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_br
 
 Use any Python environment that can import `lexmount`, `playwright`, `httpx`, and `dotenv`.
 
-## Environment
+## Region Configuration
 
 Environment variables:
 
@@ -62,8 +67,8 @@ Environment variables:
 
 - `LEXMOUNT_BASE_URL` is optional.
 
-- If you use `browser.lexmount.com`, set `LEXMOUNT_BASE_URL=https://api.lexmount.com`.
-- If you use `browser.lexmount.cn`, do not set `LEXMOUNT_BASE_URL`.
+- If you use the `Global region` endpoint, set `LEXMOUNT_BASE_URL=https://api.lexmount.com`.
+- If you use the `China region` endpoint, do not set `LEXMOUNT_BASE_URL`.
 
 Only set it for the office test environment:
 
