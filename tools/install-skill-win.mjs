@@ -53,14 +53,16 @@ function envFileContent(config) {
   return `${lines.join("\n")}\n`;
 }
 
-const ENVIRONMENTS = {
-  cn: {
-    label: "browser.lexmount.cn",
+const REGIONS = {
+  china: {
+    label: "China region",
+    endpointLabel: "browser.lexmount.cn",
     apiKeysUrl: "https://browser.lexmount.cn/settings/api-keys",
     baseUrl: "",
   },
-  com: {
-    label: "browser.lexmount.com",
+  global: {
+    label: "Global region",
+    endpointLabel: "browser.lexmount.com",
     apiKeysUrl: "https://browser.lexmount.com/settings/api-keys",
     baseUrl: "https://api.lexmount.com",
   },
@@ -103,13 +105,13 @@ function detectExistingConfig() {
     return null;
   }
 
-  const environment = rawBaseUrl.includes(".com") ? "com" : "cn";
+  const region = rawBaseUrl.includes(".com") ? "global" : "china";
 
   return {
     apiKey,
     projectId,
     rawBaseUrl,
-    environment,
+    region,
     envPath,
   };
 }
@@ -140,17 +142,17 @@ async function promptConfig() {
 
   try {
     streams.output.write("Lexmount skill setup (Windows)\n");
-    streams.output.write("Choose environment:\n");
-    streams.output.write("  a. browser.lexmount.cn\n");
-    streams.output.write("  b. browser.lexmount.com\n");
+    streams.output.write("Choose region preset:\n");
+    streams.output.write(`  a. ${REGIONS.china.label} (${REGIONS.china.endpointLabel})\n`);
+    streams.output.write(`  b. ${REGIONS.global.label} (${REGIONS.global.endpointLabel})\n`);
 
-    let environmentAnswer = "";
-    while (!["a", "b"].includes(environmentAnswer)) {
-      environmentAnswer = (await rl.question("Environment [a/b]: ")).trim().toLowerCase();
+    let regionAnswer = "";
+    while (!["a", "b"].includes(regionAnswer)) {
+      regionAnswer = (await rl.question("Region preset [a/b]: ")).trim().toLowerCase();
     }
 
-    const environment = environmentAnswer === "b" ? "com" : "cn";
-    const environmentConfig = ENVIRONMENTS[environment];
+    const region = regionAnswer === "b" ? "global" : "china";
+    const regionConfig = REGIONS[region];
     const existingConfig = detectExistingConfig();
 
     let apiKey = "";
@@ -160,7 +162,7 @@ async function promptConfig() {
       streams.output.write("\n");
       streams.output.write("Detected existing Lexmount skill configuration.\n");
       streams.output.write(`  File: ${existingConfig.envPath}\n`);
-      streams.output.write(`  Environment: ${ENVIRONMENTS[existingConfig.environment].label}\n`);
+      streams.output.write(`  Region preset: ${REGIONS[existingConfig.region].label} (${REGIONS[existingConfig.region].endpointLabel})\n`);
       streams.output.write(`  LEXMOUNT_API_KEY: ${existingConfig.apiKey}\n`);
       streams.output.write(`  LEXMOUNT_PROJECT_ID: ${existingConfig.projectId}\n`);
       if (existingConfig.rawBaseUrl) {
@@ -180,7 +182,7 @@ async function promptConfig() {
     if (!apiKey || !projectId) {
       streams.output.write("\n");
       streams.output.write("Get your project_id and api_key from:\n");
-      streams.output.write(`  ${environmentConfig.apiKeysUrl}\n`);
+      streams.output.write(`  ${regionConfig.apiKeysUrl}\n`);
       apiKey = (await rl.question("LEXMOUNT_API_KEY: ")).trim();
       projectId = (await rl.question("LEXMOUNT_PROJECT_ID: ")).trim();
     }
@@ -190,10 +192,10 @@ async function promptConfig() {
     ).trim().toLowerCase();
 
     return {
-      environment,
+      region,
       apiKey,
       projectId,
-      baseUrl: environmentConfig.baseUrl,
+      baseUrl: regionConfig.baseUrl,
       installDeps: installDepsAnswer === "" || installDepsAnswer === "y" || installDepsAnswer === "yes",
     };
   } finally {

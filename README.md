@@ -25,21 +25,23 @@ npx @lexmount/browser-skill-installer
 
 The installer now:
 
-- asks you to choose `browser.lexmount.cn` or `browser.lexmount.com`
+- asks you to choose a `region preset`
 - checks whether `~/.codex/skills/lexmount-browser/.env` already has `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`
 - if existing values are found there, asks whether to import them into the installed skill
 - shows the matching API Keys page before falling back to manual entry
 
-API Keys pages:
+Region presets and API Keys pages:
 
-- `browser.lexmount.cn`: `https://browser.lexmount.cn/settings/api-keys`
-- `browser.lexmount.com`: `https://browser.lexmount.com/settings/api-keys`
+- `China region` endpoint: `browser.lexmount.cn`
+  - API Keys page: `https://browser.lexmount.cn/settings/api-keys`
+- `Global region` endpoint: `browser.lexmount.com`
+  - API Keys page: `https://browser.lexmount.com/settings/api-keys`
 
-Environment output rules:
+Region-specific configuration rules:
 
-- both environments write `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`
-- `browser.lexmount.com` also writes `LEXMOUNT_BASE_URL=https://api.lexmount.com`
-- `browser.lexmount.cn` does not write `LEXMOUNT_BASE_URL`
+- both region presets write `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`
+- `Global region` also writes `LEXMOUNT_BASE_URL=https://api.lexmount.com`
+- `China region` does not write `LEXMOUNT_BASE_URL`
 
 ## Runtime commands
 
