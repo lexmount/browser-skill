@@ -105,6 +105,7 @@ def main() -> int:
 
     run_step("Installing dependencies", [npm, "ci"], root)
     run_step("Checking installer syntax", [node, "--check", "./tools/install-skill.mjs"], root)
+    run_step("Smoke checking main installer", [node, "./tools/install-skill.mjs", "--help"], root)
     if sys.platform == "win32":
         run_step("Smoke checking Windows installer", [node, "./tools/install-skill-win.mjs", "--help"], root)
     run_step("Checking Windows installer syntax", [node, "--check", "./tools/install-skill-win.mjs"], root)

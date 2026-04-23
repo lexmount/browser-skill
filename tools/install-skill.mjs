@@ -13,6 +13,7 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 const skillsDir = path.join(codexHome, "skills");
 const targetDir = path.join(skillsDir, skillName);
+const isWindows = process.platform === "win32";
 
 const entriesToCopy = ["SKILL.md", "REFERENCE.md", "README.md", "requirements.txt", "scripts"];
 
@@ -127,6 +128,16 @@ function openPromptStreams() {
     };
   }
 
+  if (isWindows) {
+    return {
+      input,
+      output,
+      close() {
+        input.pause();
+      },
+    };
+  }
+
   try {
     const ttyInput = fs.createReadStream("/dev/tty");
     const ttyOutput = fs.createWriteStream("/dev/tty");
@@ -153,7 +164,53 @@ function finalizeTerminal() {
   }
 }
 
+function parseBooleanEnv(name) {
+  const raw = (process.env[name] || "").trim().toLowerCase();
+  if (!raw) {
+    return null;
+  }
+  if (["1", "true", "yes", "y"].includes(raw)) {
+    return true;
+  }
+  if (["0", "false", "no", "n"].includes(raw)) {
+    return false;
+  }
+  throw new Error(`${name} must be one of: 1, true, yes, y, 0, false, no, n`);
+}
+
+function nonInteractiveConfig() {
+  const enabled = parseBooleanEnv("LEXMOUNT_INSTALL_NONINTERACTIVE");
+  if (!enabled) {
+    return null;
+  }
+
+  const region = ((process.env.LEXMOUNT_INSTALL_REGION || "").trim().toLowerCase()) || "china";
+  if (!Object.hasOwn(REGIONS, region)) {
+    throw new Error("LEXMOUNT_INSTALL_REGION must be 'china' or 'global'.");
+  }
+
+  const apiKey = (process.env.LEXMOUNT_API_KEY || "").trim();
+  const projectId = (process.env.LEXMOUNT_PROJECT_ID || "").trim();
+  if (!apiKey || !projectId) {
+    throw new Error("LEXMOUNT_API_KEY and LEXMOUNT_PROJECT_ID are required in non-interactive mode.");
+  }
+
+  const installDeps = parseBooleanEnv("LEXMOUNT_INSTALL_DEPS");
+  return {
+    region,
+    apiKey,
+    projectId,
+    baseUrl: REGIONS[region].baseUrl,
+    installDeps: installDeps ?? true,
+  };
+}
+
 async function promptConfig() {
+  const preconfigured = nonInteractiveConfig();
+  if (preconfigured) {
+    return preconfigured;
+  }
+
   const streams = openPromptStreams();
   const rl = readline.createInterface({
     input: streams.input,
@@ -240,16 +297,47 @@ function runCommand(command, args, cwd) {
   }
 }
 
+function pythonCommand() {
+  return isWindows ? "python" : "python3";
+}
+
+function venvBinary(venvDir, name) {
+  if (isWindows) {
+    return path.join(venvDir, "Scripts", `${name}.exe`);
+  }
+  return path.join(venvDir, "bin", name);
+}
+
 function installPythonVenv() {
   const venvDir = path.join(targetDir, ".venv");
   const requirementsFile = path.join(targetDir, "requirements.txt");
-  const pipPath = path.join(venvDir, "bin", "pip");
+  const pipPath = venvBinary(venvDir, "pip");
 
-  runCommand("python3", ["-m", "venv", venvDir], targetDir);
+  runCommand(pythonCommand(), ["-m", "venv", venvDir], targetDir);
   runCommand(pipPath, ["install", "-r", requirementsFile], targetDir);
 }
 
+function printHelp() {
+  console.log("Install the Lexmount Codex browser skill.");
+  console.log("");
+  console.log("Usage:");
+  console.log("  npx @lexmount/browser-skill-installer");
+  console.log("  node tools/install-skill.mjs");
+  console.log("");
+  console.log("Non-interactive mode:");
+  console.log("  Set LEXMOUNT_INSTALL_NONINTERACTIVE=1");
+  console.log("  Set LEXMOUNT_API_KEY and LEXMOUNT_PROJECT_ID");
+  console.log("  Optional: LEXMOUNT_INSTALL_REGION=china|global");
+  console.log("  Optional: LEXMOUNT_INSTALL_DEPS=1|0");
+}
+
 async function main() {
+  const args = process.argv.slice(2);
+  if (args.includes("-h") || args.includes("--help")) {
+    printHelp();
+    return;
+  }
+
   const config = await promptConfig();
   if (!config.apiKey || !config.projectId) {
     throw new Error("LEXMOUNT_API_KEY and LEXMOUNT_PROJECT_ID are required. If prompts did not appear, rerun this command from an interactive terminal.");
@@ -283,9 +371,11 @@ async function main() {
     console.log("Python dependencies were installed into:");
     console.log(`  ${path.join(targetDir, ".venv")}`);
   } else {
+    const venvDir = path.join(targetDir, ".venv");
+    const pipPath = venvBinary(venvDir, "pip");
     console.log("Initialize Python dependencies with:");
-    console.log(`  python3 -m venv ${path.join(targetDir, ".venv")}`);
-    console.log(`  ${path.join(targetDir, ".venv", "bin", "pip")} install -r ${path.join(targetDir, "requirements.txt")}`);
+    console.log(`  ${pythonCommand()} -m venv ${venvDir}`);
+    console.log(`  ${pipPath} install -r ${path.join(targetDir, "requirements.txt")}`);
   }
   console.log("");
   console.log("You can update these values later by editing that file.");
