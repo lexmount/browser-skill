@@ -1,6 +1,6 @@
 {
   "name": "@lexmount/browser-skill-installer",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Installer for the Lexmount Codex browser skill",
   "type": "module",
   "scripts": {
