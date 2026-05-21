@@ -1,0 +1,21 @@
+{
+  "session": {
+    "create": true
+  },
+  "close_created_session": true,
+  "steps": [
+    {
+      "action": "open-url",
+      "url": "https://example.com"
+    },
+    {
+      "action": "wait-selector",
+      "selector": "body"
+    },
+    {
+      "action": "snapshot",
+      "max_chars": 2000,
+      "output": "snapshot.json"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+[project]
+name = "lex-browser-runtime"
+version = "0.2.0"
+description = "SDK-first browser runtime layer for Lexmount browser sessions and runtime assist capabilities"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "regex>=2024.11.6",
+]
+
+[project.optional-dependencies]
+lexmount = ["lexmount>=0.4.6"]
+browser = ["playwright>=1.40"]
+skill = ["lexmount>=0.4.6", "playwright>=1.40"]
+
+[project.scripts]
+lex-browser-runtime = "lex_browser_runtime.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["lex_browser_runtime*"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "ruff>=0.8",
+    "types-PyYAML>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", ".ai/skills"]
+
+[tool.ruff]
+line-length = 88
