@@ -1,195 +1,169 @@
-# browser-skill
+# lex-browser-runtime in browser-skill
 
-Skill package for Codex/Claude Code/OpenClaw to work with the Lexmount browser.
+`lex-browser-runtime` is the SDK-first runtime layer for Lexmount-backed browser
+automation.
 
-Main entry:
+This repository is the canonical home for both the runtime package and the
+installable Lexmount browser skill. The earlier `lex-browser-runtime` repository
+was used to extract and validate the runtime layer; release and skill
+distribution now happen from `lexmount/browser-skill`.
 
-- `SKILL.md`: instructions for the agent
-- `scripts/lexmount_browser.py`: helper CLI for session/context lifecycle plus basic browser actions
+The current milestone keeps the transport deliberately small while moving the
+runtime assist capabilities out of browser-use: browser lifecycle, capability
+registry, telemetry contracts, API fetch safety, response compaction, compact
+state detection, and deterministic high-volume completion contracts live here.
+The near-term acceptance test is parity: browser-use should be able to call this
+SDK and rerun the same LexBench-Browser 20-case slice with the same
+runtime-assist gains.
 
-The implementation prefers the local `lexmount-python-sdk` in this workspace and
-supports the direct shared-browser websocket form as a fallback.
+The runtime is also the home for the reusable engine behind the
+`lexmount/browser-skill` surface. Agent-facing skills and installers should call
+this package instead of owning their own Lexmount lifecycle/action implementation.
 
-If session creation hits the platform's active browser/session cap, the helper
-returns a structured JSON error with a dedicated `browser_parallel_limit_reached`
-error code, an explicit Chinese message that the browser parallel quota is full,
-and the original SDK `status_code` plus `response` for debugging.
+## Scope
 
-## Installation flow
+- Create, describe, and close Lexmount browser sessions.
+- List/get/close sessions and contexts for skill/CLI workflows.
+- Support an existing-CDP backend for local tests and integration shims.
+- Expose a small JSON CLI for Lexmount session/context lifecycle and direct
+  shared websocket URLs.
+- Run Playwright-backed primitive browser actions against an explicit CDP URL,
+  Lexmount session id, or direct shared websocket URL.
+- Validate and run browser-skill case files with JSONL events and summary
+  artifacts.
+- Load runtime capability knowledge from adapter JSON and site-hint YAML files.
+- Fetch adapter-approved public APIs with pre/post redirect URL safety checks.
+- Compact known API/page responses into stable, answerable runtime observations.
+- Provide deterministic runtime completion contracts for high-volume flows where
+  UI clicking is the wrong primitive.
+- Produce agent-agnostic runtime traces that benchmark harnesses can store under
+  `agent_metadata.runtime_assist`.
 
-Run:
+## Non-Goals
 
-```bash
-npx @lexmount/browser-skill-installer
-```
+- This package is not an agent planner.
+- This package still does not expose an HTTP or MCP service; callers use the SDK
+  directly or the thin local CLI.
+- The first SDK milestone does not integrate Skyvern, Agent-TARS, Claude Code, or
+  OpenAI CUA.
+- Batch retry/watch and producer/consumer research templates from `browser-skill`
+  are intentionally kept out of this case extraction and should move in separate
+  PRs.
 
-The installer now:
+## CLI Surface
 
-- asks you to choose a `region preset`
-- checks whether `~/.codex/skills/lexmount-browser/.env` already has `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`
-- if existing values are found there, asks whether to import them into the installed skill
-- shows the matching API Keys page before falling back to manual entry
-
-Region presets and API Keys pages:
-
-- `China region` endpoint: `browser.lexmount.cn`
-  - API Keys page: `https://browser.lexmount.cn/settings/api-keys`
-- `Global region` endpoint: `browser.lexmount.com`
-  - API Keys page: `https://browser.lexmount.com/settings/api-keys`
-
-Region-specific configuration rules:
-
-- both region presets write `LEXMOUNT_API_KEY` and `LEXMOUNT_PROJECT_ID`
-- `Global region` also writes `LEXMOUNT_BASE_URL=https://api.lexmount.com`
-- `China region` does not write `LEXMOUNT_BASE_URL`
-
-## Runtime commands
-
-During `npx` installation, the installer can create the skill-local virtual environment for you.
-
-If you skip that step, initialize it manually after installation:
-
-Create the virtual environment inside the installed skill directory at `~/.codex/skills/lexmount-browser/.venv`.
-
-```bash
-python3 -m venv ~/.codex/skills/lexmount-browser/.venv
-~/.codex/skills/lexmount-browser/.venv/bin/pip install -r ~/.codex/skills/lexmount-browser/requirements.txt
-```
-
-This installs the Lexmount SDK and the Playwright Python client into the skill-local virtual environment.
-
-After installation into `~/.codex/skills/lexmount-browser`, use:
+Install the optional skill dependencies when using the CLI against Lexmount
+browsers:
 
 ```bash
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session create
+uv pip install -e '.[skill]'
 ```
 
-Other common commands:
+Common commands:
 
 ```bash
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session create --create-context
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session create --context-id <id>
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session list
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session get --session-id <id>
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py session close --session-id <id>
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py context create
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py context list
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py action open-url --session-id <id> --url https://example.com
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py action click --session-id <id> --selector 'button'
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py action screenshot --session-id <id> --output /tmp/example.png
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py case validate --file /path/to/case.json
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py case run --file /path/to/case.json --stop-on-error
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run submit --file /path/to/case.json --count 5 --concurrency 2
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run list
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run summary --batch-id <batch_id>
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py run retry --batch-id <batch_id>
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py direct-url
-~/.codex/skills/lexmount-browser/.venv/bin/python ~/.codex/skills/lexmount-browser/scripts/lexmount_browser.py research knowledge --query "browser use benchmark" --max-links 100 --consumer-count 8
+lex-browser-runtime session create
+lex-browser-runtime session create --create-context --metadata-json '{"owner":"demo"}'
+lex-browser-runtime session list --status active
+lex-browser-runtime session get --session-id <id>
+lex-browser-runtime session close --session-id <id>
+lex-browser-runtime context list
+lex-browser-runtime direct-url
+lex-browser-runtime action open-url --session-id <id> --url https://example.com
+lex-browser-runtime action snapshot --session-id <id>
+lex-browser-runtime case validate --file examples/basic-open.json
+lex-browser-runtime case run --file examples/basic-open.json --stop-on-error
 ```
 
-Bundled example cases:
+The CLI emits structured JSON compatible with the original browser skill helper,
+including the dedicated `browser_parallel_limit_reached` error code when the
+Lexmount active browser quota is full.
 
-- `browser-skill/examples/basic-open.json`: smoke case for open, wait, snapshot, and screenshot
-- `browser-skill/examples/retry-demo.json`: success case for retry demonstrations after a failing batch is fixed
-- `browser-skill/examples/retry-demo-fail.json`: intentionally failing case for retry workflow validation
+`direct-url` returns a masked Lexmount shared-browser websocket URL by default
+because the underlying protocol carries the API key in the URL query string. Use
+`--reveal-url` only when an interactive caller needs the live URL, and treat that
+output as a secret: do not store it in persistent logs, issue trackers, or shared
+transcripts.
 
-## Streaming knowledge research template
-
-The `research knowledge` command turns the skill into a producer/consumer browser pipeline:
-
-- producer and consumer browser sessions are created in parallel at startup
-- producer and consumer browser sessions are also closed in parallel during cleanup
-- one producer browser opens search result pages and keeps enqueueing links
-- multiple consumer browsers pull links from the queue in parallel
-- each consumer processes every URL in a fresh page to avoid cross-site navigation interference
-- each consumer stores `page.json` artifacts with title, URL, HTML excerpt, and text excerpt
-- optional screenshots can be captured with `--screenshot`
-- producer-side search page failures are recorded and skipped instead of aborting the whole run
-- producer-side search navigation now tries current-DOM recovery first and then retries once with a longer timeout
-
-Example:
+## Development
 
 ```bash
-lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py \
-  research knowledge \
-  --query "site:openai.com browser agents" \
-  --max-links 100 \
-  --consumer-count 6 \
-  --search-engine bing \
-  --output-dir /tmp/lexmount-runs/research-openai
+make venv
+make deps
+make check
 ```
 
-Important parameters:
+The package supports Python 3.11+ so it can be installed into the existing
+browser-use benchmark environment.
 
-- `--query`: the search query issued by the producer browser
-- `--max-links`: how many search result links to stream to consumers
-- `--min-success-pages`: keep producing beyond `--max-links` until this many pages succeed, unless search pages are exhausted
-- `--consumer-count`: number of consumer browsers
-- `--producer-mode`: producer browser mode, default `normal`, optional `light`
-- `--browser-mode`: consumer browser mode, default `normal`, optional `light`
-- `--search-engine`: built-in defaults for `bing`, `google`, `baidu`, or `duckduckgo`
-- `--fallback-search-engines`: comma-separated fallback engines; default is `baidu`, so producer starts with Bing and falls back when needed
-- `--search-url-template`: optional custom search URL template using `{query}`, `{offset}`, and `{page}`
-- `--result-selector`: optional CSS selector for result links
-- `--keep-sessions`: keep sessions open instead of closing them automatically
+## Installable Agent Skill
 
-Output files inside the run directory:
+The portable Claude Code / Codex skill lives in
+`skills/lexmount-browser`. It is a thin wrapper around this package, so installed
+agents can quickly use Lexmount without copying the old `browser-skill` helper
+implementation.
 
-- `events.jsonl`: producer and consumer lifecycle events
-- `links.jsonl`: links emitted by the producer
-- `results.jsonl`: per-link success or failure records from consumers
-- `summary.json`: full structured summary for the run
-- `pages/<rank>-.../page.html`: raw HTML saved for each successful page
-- `pages/<rank>-.../page.json`: captured page artifact per consumed URL
-
-For repository-local development, you can still use the quickstart virtualenv:
+Install into both local Codex and Claude Code skill directories:
 
 ```bash
-lexmount-python-sdk-quickstart/venv/bin/python browser-skill/scripts/lexmount_browser.py prepare
+python3 scripts/install_lexmount_browser_skill.py --target both
 ```
 
-## Install shape
-
-For local development, install into Codex by linking or copying this folder into:
-
-- `~/.codex/skills/lexmount-browser`
-
-The npm package installer entrypoint can be invoked with:
+Optionally write the current Lexmount credentials into the installed skill and
+bootstrap its local runtime environment:
 
 ```bash
-npx @lexmount/browser-skill-installer
+LEXMOUNT_API_KEY=... LEXMOUNT_PROJECT_ID=... \
+python3 scripts/install_lexmount_browser_skill.py \
+  --target both \
+  --write-env-from-current \
+  --bootstrap
 ```
 
-## Publish path
+After installation, agents should call the stable wrapper:
 
-This package is published as:
+```bash
+~/.codex/skills/lexmount-browser/scripts/lexmount-browser session create
+~/.codex/skills/lexmount-browser/scripts/lexmount-browser action snapshot --session-id <id>
+~/.codex/skills/lexmount-browser/scripts/lexmount-browser case run --file ~/.codex/skills/lexmount-browser/examples/basic-open.json --close-created-session
+```
+
+For Claude Code, use the same path under `~/.claude/skills/lexmount-browser`.
+
+## npm Installer Release
+
+The installable skill is packaged as:
 
 - npm package: `@lexmount/browser-skill-installer`
+- binary: `lexmount-browser-skill-install`
 
-The published package contains `SKILL.md`, `REFERENCE.md`, `scripts/`, and `tools/install-skill.mjs`.
-
-Users run:
+After publishing, users can install without cloning this repository:
 
 ```bash
 npx @lexmount/browser-skill-installer
 ```
 
-The installer copies the skill into:
+Non-interactive installation is available for CI or scripted setup:
 
-```text
-~/.codex/skills/lexmount-browser
+```bash
+LEXMOUNT_INSTALL_NONINTERACTIVE=1 \
+LEXMOUNT_INSTALL_TARGET=both \
+LEXMOUNT_INSTALL_REGION=china \
+LEXMOUNT_INSTALL_DEPS=1 \
+LEXMOUNT_API_KEY=... \
+LEXMOUNT_PROJECT_ID=... \
+npx @lexmount/browser-skill-installer
 ```
 
-## npm release workflow
+Release flow:
 
-The npm publish flow matches the Lexmount JS SDK release pattern:
+1. Bump `package.json` to a new unpublished version.
+2. Push the change and tag.
+3. Create a GitHub Release for the tag.
+4. `.github/workflows/publish.yml` validates the package and runs
+   `npm publish`.
 
-1. bump `package.json` to a new unpublished version
-2. push the commit and tag
-3. create and publish a GitHub Release
-4. GitHub Actions workflow `publish.yml` validates the package and publishes it to npm via trusted publishing
-
-Local validation entrypoint:
+Local release validation:
 
 ```bash
 npm run release:npm:check

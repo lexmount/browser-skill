@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">AI-first 人机协作开发流程</title>
+  <desc id="desc">Human-agent collaboration workflow overview. The diagram is illustrative; behavior constraints and collaboration rules live in the ai-collaboration-workflow skill.</desc>
+  <defs>
+    <style>
+      .title { font: 700 34px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #111827; }
+      .subtitle { font: 500 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #374151; }
+      .lane { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #111827; }
+      .label { font: 700 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #111827; }
+      .small { font: 500 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #374151; }
+      .tiny { font: 500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #4b5563; }
+      .human { fill: #ecfdf5; stroke: #059669; stroke-width: 2; rx: 10; }
+      .ai { fill: #eff6ff; stroke: #2563eb; stroke-width: 2; rx: 10; }
+      .decision { fill: #faf5ff; stroke: #7c3aed; stroke-width: 2; rx: 10; }
+      .publish { fill: #fff7ed; stroke: #ea580c; stroke-width: 2; rx: 10; }
+      .note { fill: #f8fafc; stroke: #64748b; stroke-width: 1.5; rx: 10; }
+      .line { stroke: #2563eb; stroke-width: 3; marker-end: url(#arrow); fill: none; }
+      .human-line { stroke: #059669; stroke-width: 3; marker-end: url(#human-arrow); fill: none; }
+      .review-line { stroke: #ea580c; stroke-width: 3; marker-end: url(#review-arrow); fill: none; }
+      .dash { stroke-dasharray: 8 6; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#2563eb" />
+    </marker>
+    <marker id="human-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#059669" />
+    </marker>
+    <marker id="review-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#ea580c" />
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1440" height="900" fill="#ffffff" />
+  <text x="720" y="46" text-anchor="middle" class="title">AI-first 人机协作开发流程</text>
+  <text x="720" y="78" text-anchor="middle" class="subtitle">人提供上下文和关键判断；AI 引导下一步、执行、验证、沉淀，并减少非必要 HIL</text>
+
+  <text x="44" y="128" class="lane">1. 输入与理解</text>
+  <rect x="36" y="150" width="260" height="126" class="human" />
+  <text x="58" y="184" class="label">人提供任务上下文</text>
+  <text x="58" y="214" class="small">PRD / feedback / 约束 / 验收标准</text>
+  <text x="58" y="238" class="small">只补充关键判断，不手动驱动流程</text>
+  <text x="58" y="258" class="tiny">docs/product-specs/  ·  .ai/feedback/</text>
+
+  <rect x="336" y="150" width="260" height="126" class="ai" />
+  <text x="358" y="184" class="label">AI 理解目标</text>
+  <text x="358" y="214" class="small">读取仓库入口、workflow skill、架构和现有状态</text>
+  <text x="358" y="238" class="small">判断范围、风险、是否需要澄清</text>
+  <text x="358" y="258" class="tiny">AGENTS / CLAUDE  ·  ai-collaboration-workflow</text>
+
+  <rect x="636" y="150" width="260" height="126" class="decision" />
+  <text x="658" y="184" class="label">AI 判断承载位</text>
+  <text x="658" y="214" class="small">一次性小改：直接进入执行</text>
+  <text x="658" y="238" class="small">按 workflow skill 决定承载位</text>
+  <text x="658" y="258" class="tiny">plan / topic / PR body</text>
+
+  <rect x="936" y="150" width="260" height="126" class="human" />
+  <text x="958" y="184" class="label">关键判断才打断人</text>
+  <text x="958" y="214" class="small">业务取舍 / 架构方向 / 不可逆动作</text>
+  <text x="958" y="238" class="small">高置信度的小决策由 AI 直接推进</text>
+  <text x="958" y="258" class="tiny">降低非必要 HIL</text>
+
+  <path d="M296 213 H332" class="human-line" />
+  <path d="M596 213 H632" class="line" />
+  <path d="M896 213 H932" class="line" />
+
+  <text x="44" y="350" class="lane">2. 执行与验证</text>
+  <rect x="36" y="372" width="260" height="132" class="ai" />
+  <text x="58" y="406" class="label">进入执行流程</text>
+  <text x="58" y="436" class="small">按任务需要使用 skills / agent 能力</text>
+  <text x="58" y="460" class="small">需要设计或拆解时才写本地工件</text>
+  <text x="58" y="482" class="tiny">能力按需启用，不让人记命令</text>
+
+  <rect x="336" y="372" width="260" height="132" class="ai" />
+  <text x="358" y="406" class="label">修改文件</text>
+  <text x="358" y="436" class="small">代码 / 文档 / 配置都只做当前范围</text>
+  <text x="358" y="460" class="small">同一 PR 复用当前任务分支或 worktree</text>
+  <text x="358" y="482" class="tiny">worktree 归属按入口硬闸门</text>
+
+  <rect x="636" y="372" width="260" height="132" class="ai" />
+  <text x="658" y="406" class="label">验证结果</text>
+  <text x="658" y="436" class="small">测试 / lint / 类型 / 运行 / 解析检查</text>
+  <text x="658" y="460" class="small">文档不写脆弱字符串测试</text>
+  <text x="658" y="482" class="tiny">没有证据就不能声明完成</text>
+
+  <rect x="936" y="372" width="260" height="132" class="decision" />
+  <text x="958" y="406" class="label">总结、收尾与下一步</text>
+  <text x="958" y="436" class="small">说明改动、验证、剩余风险</text>
+  <text x="958" y="460" class="small">明确用户下一步或无需操作</text>
+  <text x="958" y="482" class="tiny">小改也要交接清楚</text>
+
+  <path d="M1066 276 C1066 326 166 322 166 368" class="line" />
+  <path d="M296 438 H332" class="line" />
+  <path d="M596 438 H632" class="line" />
+  <path d="M896 438 H932" class="line" />
+
+  <text x="44" y="578" class="lane">3. PR、review 与合入</text>
+  <rect x="36" y="600" width="260" height="132" class="human" />
+  <text x="58" y="634" class="label">发布边界</text>
+  <text x="58" y="664" class="small">发布和高风险动作</text>
+  <text x="58" y="688" class="small">由 workflow skill 裁决</text>
+  <text x="58" y="710" class="tiny">此图不承载规则正文</text>
+
+  <rect x="336" y="600" width="260" height="132" class="publish" />
+  <text x="358" y="634" class="label">AI 维护 PR</text>
+  <text x="358" y="664" class="small">按 review 反馈回到同一流程</text>
+  <text x="358" y="688" class="small">验证、收口和回复在同一闭环</text>
+  <text x="358" y="710" class="tiny">不新开平行流程</text>
+
+  <rect x="636" y="600" width="260" height="132" class="human" />
+  <text x="658" y="634" class="label">人 review</text>
+  <text x="658" y="664" class="small">看 PR、提 comments、判断风险</text>
+  <text x="658" y="688" class="small">有问题就回到同一执行流程</text>
+  <text x="658" y="710" class="tiny">多轮闭环，不新开平行流程</text>
+
+  <rect x="936" y="600" width="260" height="132" class="publish" />
+  <text x="958" y="634" class="label">收尾</text>
+  <text x="958" y="664" class="small">处理合入或等待 review / CI</text>
+  <text x="958" y="688" class="small">交代明确下一步</text>
+  <text x="958" y="710" class="tiny">裁决权在 workflow skill</text>
+
+  <path d="M1066 504 C1066 552 166 552 166 596" class="review-line" />
+  <path d="M296 666 H332" class="human-line" />
+  <path d="M596 666 H632" class="review-line" />
+  <path d="M896 666 H932" class="review-line" />
+  <path d="M766 600 C766 540 166 536 166 504" class="review-line dash" />
+
+  <text x="1250" y="128" class="lane">设计原则</text>
+  <rect x="1224" y="150" width="180" height="126" class="note" />
+  <text x="1244" y="184" class="label">AI-first</text>
+  <text x="1244" y="214" class="small">AI 引导下一步</text>
+  <text x="1244" y="238" class="small">用户做关键判断</text>
+
+  <rect x="1224" y="372" width="180" height="132" class="note" />
+  <text x="1244" y="406" class="label">简单优先</text>
+  <text x="1244" y="436" class="small">默认路径短</text>
+  <text x="1244" y="460" class="small">复杂能力按需打开</text>
+
+  <rect x="1224" y="600" width="180" height="132" class="note" />
+  <text x="1244" y="634" class="label">共享 .ai</text>
+  <text x="1244" y="664" class="small">Claude / Codex 共用</text>
+  <text x="1244" y="688" class="small">项目专用能力留项目内</text>
+
+  <rect x="36" y="804" width="1368" height="54" class="note" />
+  <text x="58" y="837" class="small">核心定位：workflow skill 给出可移植 AI 协作规则和流程；工具命令、业务事实和语言偏好由消费仓库项目文档承载。</text>
+</svg>

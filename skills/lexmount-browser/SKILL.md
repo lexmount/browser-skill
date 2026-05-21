@@ -1,0 +1,152 @@
+---
+name: lexmount-browser
+description: Use when the user wants Claude Code or Codex to create, reuse, inspect, or operate a Lexmount remote browser through lex-browser-runtime. Provides a stable installed-skill wrapper for session/context lifecycle, direct-url, primitive browser actions, and browser case validation/run without hand-written curl or ad hoc Playwright scripts.
+allowed-tools: Bash
+---
+
+# Lexmount Browser
+
+Use this skill when a task needs Lexmount browser capability from an installed
+Claude Code or Codex skill.
+
+The skill is intentionally thin: it delegates implementation to
+`lex-browser-runtime` so lifecycle, browser actions, case execution, error
+normalization, and future runtime abilities live in one package instead of being
+duplicated inside the skill.
+
+## First Check
+
+Resolve the installed skill directory:
+
+```bash
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/lexmount-browser"
+[ -d "$SKILL_DIR" ] || SKILL_DIR="$HOME/.claude/skills/lexmount-browser"
+```
+
+Then use the wrapper:
+
+```bash
+"$SKILL_DIR/scripts/lexmount-browser" --help
+```
+
+The wrapper loads `$SKILL_DIR/.env` when present, auto-bootstraps
+`$SKILL_DIR/.venv` when needed, and then invokes the `lex-browser-runtime` CLI.
+
+## Required Configuration
+
+Set credentials in the shell or in `$SKILL_DIR/.env`:
+
+```bash
+LEXMOUNT_API_KEY=...
+LEXMOUNT_PROJECT_ID=...
+```
+
+Region rules:
+
+- China/default region: leave `LEXMOUNT_BASE_URL` unset.
+- Global region: set `LEXMOUNT_BASE_URL=https://api.lexmount.com`.
+- Office test environment only: set
+  `LEXMOUNT_BASE_URL=https://apitest.local.lexmount.net`.
+
+Never print or persist live API keys. `direct-url` masks URL credentials by
+default; use `--reveal-url` only for an immediate interactive connection.
+
+## Quick Start
+
+Create a session:
+
+```bash
+"$SKILL_DIR/scripts/lexmount-browser" session create
+```
+
+Open a page and capture compact state:
+
+```bash
+"$SKILL_DIR/scripts/lexmount-browser" action open-url --session-id <id> --url https://example.com
+"$SKILL_DIR/scripts/lexmount-browser" action snapshot --session-id <id> --max-chars 2000
+```
+
+Close the session when finished:
+
+```bash
+"$SKILL_DIR/scripts/lexmount-browser" session close --session-id <id>
+```
+
+Run a repeatable case:
+
+```bash
+"$SKILL_DIR/scripts/lexmount-browser" case validate --file "$SKILL_DIR/examples/basic-open.json"
+"$SKILL_DIR/scripts/lexmount-browser" case run --file "$SKILL_DIR/examples/basic-open.json" --stop-on-error --close-created-session
+```
+
+## Preferred Workflow
+
+1. Use this skill before writing raw Lexmount SDK snippets, curl calls, or
+   one-off Playwright scripts.
+2. Prefer `session create` over `direct-url` for real browser work.
+3. Use `action ...` commands for one-off browser operations.
+4. Use `case validate` and `case run` when the flow has multiple deterministic
+   browser steps or should be reproducible.
+5. Return or summarize the CLI JSON payloads instead of translating them into
+   vague prose.
+6. If credentials are missing, tell the user exactly which environment variable
+   is absent.
+7. If session creation hits a parallel limit, surface the structured
+   `browser_parallel_limit_reached` error and suggest closing existing sessions.
+
+## Command Map
+
+Session/context lifecycle:
+
+```bash
+"$SKILL_DIR/scripts/lexmount-browser" session create
+"$SKILL_DIR/scripts/lexmount-browser" session create --create-context
+"$SKILL_DIR/scripts/lexmount-browser" session create --context-id <context_id>
+"$SKILL_DIR/scripts/lexmount-browser" session list --status active
+"$SKILL_DIR/scripts/lexmount-browser" session get --session-id <id>
+"$SKILL_DIR/scripts/lexmount-browser" session keepalive --session-id <id> --duration 10
+"$SKILL_DIR/scripts/lexmount-browser" session close --session-id <id>
+"$SKILL_DIR/scripts/lexmount-browser" context list
+"$SKILL_DIR/scripts/lexmount-browser" context create
+"$SKILL_DIR/scripts/lexmount-browser" context get --context-id <id>
+"$SKILL_DIR/scripts/lexmount-browser" context delete --context-id <id>
+```
+
+Browser actions:
+
+```bash
+"$SKILL_DIR/scripts/lexmount-browser" action open-url --session-id <id> --url https://example.com
+"$SKILL_DIR/scripts/lexmount-browser" action wait-selector --session-id <id> --selector 'body'
+"$SKILL_DIR/scripts/lexmount-browser" action click --session-id <id> --selector 'button'
+"$SKILL_DIR/scripts/lexmount-browser" action type --session-id <id> --selector 'input[name=q]' --text 'hello'
+"$SKILL_DIR/scripts/lexmount-browser" action screenshot --session-id <id> --output /tmp/lexmount.png
+"$SKILL_DIR/scripts/lexmount-browser" action eval --session-id <id> --expression '() => document.title'
+"$SKILL_DIR/scripts/lexmount-browser" action snapshot --session-id <id>
+```
+
+Case files:
+
+```bash
+"$SKILL_DIR/scripts/lexmount-browser" case validate --file /path/to/case.json
+"$SKILL_DIR/scripts/lexmount-browser" case run --file /path/to/case.json --stop-on-error --close-created-session
+```
+
+Compatibility aliases:
+
+```bash
+"$SKILL_DIR/scripts/lexmount-browser" prepare
+"$SKILL_DIR/scripts/lexmount-browser" list-contexts
+"$SKILL_DIR/scripts/lexmount-browser" close-session --session-id <id>
+"$SKILL_DIR/scripts/lexmount-browser" direct-url
+```
+
+## Current Boundary
+
+This migrated skill covers the core `browser-skill` path:
+session/context lifecycle, direct URL generation, primitive Playwright-backed
+actions, and single case validate/run.
+
+Batch retry/watch and producer/consumer research templates from the old
+`lexmount/browser-skill` package are intentionally not part of this installed
+skill yet. Use separate runtime PRs for those so the runtime layer stays
+reviewable.

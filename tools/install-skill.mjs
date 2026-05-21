@@ -10,12 +10,38 @@ import { stdin as input, stdout as output } from "node:process";
 
 const skillName = "lexmount-browser";
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-const skillsDir = path.join(codexHome, "skills");
-const targetDir = path.join(skillsDir, skillName);
+const sourceSkillDir = path.join(packageRoot, "skills", skillName);
 const isWindows = process.platform === "win32";
 
-const entriesToCopy = ["SKILL.md", "REFERENCE.md", "README.md", "requirements.txt", "scripts"];
+const REGIONS = {
+  china: {
+    label: "China region",
+    endpointLabel: "browser.lexmount.cn",
+    apiKeysUrl: "https://browser.lexmount.cn/settings/api-keys",
+    baseUrl: "",
+  },
+  global: {
+    label: "Global region",
+    endpointLabel: "browser.lexmount.com",
+    apiKeysUrl: "https://browser.lexmount.com/settings/api-keys",
+    baseUrl: "https://api.lexmount.com",
+  },
+};
+
+function codexHome() {
+  return process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+}
+
+function targetDirectories(target) {
+  const targets = {
+    codex: path.join(codexHome(), "skills", skillName),
+    claude: path.join(os.homedir(), ".claude", "skills", skillName),
+  };
+  if (target === "both") {
+    return [targets.codex, targets.claude];
+  }
+  return [targets[target]];
+}
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -39,39 +65,58 @@ function copyRecursive(src, dest) {
 
   ensureDir(path.dirname(dest));
   fs.copyFileSync(src, dest);
+  fs.chmodSync(dest, stat.mode);
+}
+
+function assertEnvValueSafe(key, value) {
+  if (value.includes("\n") || value.includes("\r")) {
+    throw new Error(`${key} must not contain newline characters.`);
+  }
+}
+
+function quoteEnvValue(value) {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function parseEnvValue(value) {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    let parsed = "";
+    for (let index = 1; index < value.length - 1; index += 1) {
+      const char = value[index];
+      if (char === "\\" && index < value.length - 2) {
+        index += 1;
+        parsed += value[index];
+        continue;
+      }
+      parsed += char;
+    }
+    return parsed;
+  }
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1);
+  }
+  return value;
 }
 
 function envFileContent(config) {
-  const lines = [
-    `LEXMOUNT_API_KEY=${config.apiKey}`,
-    `LEXMOUNT_PROJECT_ID=${config.projectId}`,
-  ];
-
-  if (config.baseUrl) {
-    lines.push(`LEXMOUNT_BASE_URL=${config.baseUrl}`);
+  const values = {
+    LEXMOUNT_API_KEY: config.apiKey,
+    LEXMOUNT_PROJECT_ID: config.projectId,
+    LEXMOUNT_BASE_URL: config.baseUrl,
+  };
+  const lines = [];
+  for (const [key, value] of Object.entries(values)) {
+    if (!value) {
+      continue;
+    }
+    assertEnvValueSafe(key, value);
+    lines.push(`${key}=${quoteEnvValue(value)}`);
   }
-
   return `${lines.join("\n")}\n`;
 }
 
-const REGIONS = {
-  china: {
-    label: "China region",
-    endpointLabel: "browser.lexmount.cn",
-    apiKeysUrl: "https://browser.lexmount.cn/settings/api-keys",
-    baseUrl: "",
-  },
-  global: {
-    label: "Global region",
-    endpointLabel: "browser.lexmount.com",
-    apiKeysUrl: "https://browser.lexmount.com/settings/api-keys",
-    baseUrl: "https://api.lexmount.com",
-  },
-};
-
 function parseEnvFile(content) {
   const values = {};
-
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) {
@@ -84,37 +129,38 @@ function parseEnvFile(content) {
     }
 
     const key = line.slice(0, separatorIndex).trim();
-    const value = line.slice(separatorIndex + 1).trim();
+    const value = parseEnvValue(line.slice(separatorIndex + 1).trim());
     values[key] = value;
   }
-
   return values;
 }
 
-function detectExistingConfig() {
-  const envPath = path.join(targetDir, ".env");
-  if (!fs.existsSync(envPath)) {
-    return null;
+function detectExistingConfig(targetDirs) {
+  for (const targetDir of targetDirs) {
+    const envPath = path.join(targetDir, ".env");
+    if (!fs.existsSync(envPath)) {
+      continue;
+    }
+
+    const envValues = parseEnvFile(fs.readFileSync(envPath, "utf8"));
+    const apiKey = (envValues.LEXMOUNT_API_KEY || "").trim();
+    const projectId = (envValues.LEXMOUNT_PROJECT_ID || "").trim();
+    const rawBaseUrl = (envValues.LEXMOUNT_BASE_URL || "").trim();
+    if (!apiKey || !projectId) {
+      continue;
+    }
+
+    const region = rawBaseUrl.includes(".com") ? "global" : "china";
+    return { apiKey, projectId, rawBaseUrl, region, envPath };
   }
+  return null;
+}
 
-  const envValues = parseEnvFile(fs.readFileSync(envPath, "utf8"));
-  const apiKey = (envValues.LEXMOUNT_API_KEY || "").trim();
-  const projectId = (envValues.LEXMOUNT_PROJECT_ID || "").trim();
-  const rawBaseUrl = (envValues.LEXMOUNT_BASE_URL || "").trim();
-
-  if (!apiKey || !projectId) {
-    return null;
+function maskSecret(value) {
+  if (value.length <= 4) {
+    return "****";
   }
-
-  const region = rawBaseUrl.includes(".com") ? "global" : "china";
-
-  return {
-    apiKey,
-    projectId,
-    rawBaseUrl,
-    region,
-    envPath,
-  };
+  return `****${value.slice(-4)}`;
 }
 
 function openPromptStreams() {
@@ -178,13 +224,23 @@ function parseBooleanEnv(name) {
   throw new Error(`${name} must be one of: 1, true, yes, y, 0, false, no, n`);
 }
 
+function parseTarget(value) {
+  const target = (value || "").trim().toLowerCase() || "codex";
+  if (!["codex", "claude", "both"].includes(target)) {
+    throw new Error("Target must be codex, claude, or both.");
+  }
+  return target;
+}
+
 function nonInteractiveConfig() {
   const enabled = parseBooleanEnv("LEXMOUNT_INSTALL_NONINTERACTIVE");
   if (!enabled) {
     return null;
   }
 
-  const region = ((process.env.LEXMOUNT_INSTALL_REGION || "").trim().toLowerCase()) || "china";
+  const target = parseTarget(process.env.LEXMOUNT_INSTALL_TARGET || "codex");
+  const region =
+    (process.env.LEXMOUNT_INSTALL_REGION || "").trim().toLowerCase() || "china";
   if (!Object.hasOwn(REGIONS, region)) {
     throw new Error("LEXMOUNT_INSTALL_REGION must be 'china' or 'global'.");
   }
@@ -192,16 +248,19 @@ function nonInteractiveConfig() {
   const apiKey = (process.env.LEXMOUNT_API_KEY || "").trim();
   const projectId = (process.env.LEXMOUNT_PROJECT_ID || "").trim();
   if (!apiKey || !projectId) {
-    throw new Error("LEXMOUNT_API_KEY and LEXMOUNT_PROJECT_ID are required in non-interactive mode.");
+    throw new Error(
+      "LEXMOUNT_API_KEY and LEXMOUNT_PROJECT_ID are required in non-interactive mode."
+    );
   }
 
-  const installDeps = parseBooleanEnv("LEXMOUNT_INSTALL_DEPS");
+  const bootstrap = parseBooleanEnv("LEXMOUNT_INSTALL_DEPS");
   return {
+    target,
     region,
     apiKey,
     projectId,
     baseUrl: REGIONS[region].baseUrl,
-    installDeps: installDeps ?? true,
+    bootstrap: bootstrap ?? true,
   };
 }
 
@@ -219,19 +278,39 @@ async function promptConfig() {
   });
 
   try {
-    streams.output.write("Lexmount skill setup\n");
-    streams.output.write("Choose region preset:\n");
-    streams.output.write(`  a. ${REGIONS.china.label} (${REGIONS.china.endpointLabel})\n`);
-    streams.output.write(`  b. ${REGIONS.global.label} (${REGIONS.global.endpointLabel})\n`);
+    streams.output.write("Lexmount browser skill setup\n");
+    streams.output.write("Choose install target:\n");
+    streams.output.write("  a. Codex (~/.codex/skills)\n");
+    streams.output.write("  b. Claude Code (~/.claude/skills)\n");
+    streams.output.write("  c. Both\n");
+
+    let targetAnswer = "";
+    while (!["a", "b", "c"].includes(targetAnswer)) {
+      targetAnswer = (await rl.question("Install target [a/b/c]: "))
+        .trim()
+        .toLowerCase();
+    }
+    const target = { a: "codex", b: "claude", c: "both" }[targetAnswer];
+    const selectedTargetDirs = targetDirectories(target);
+
+    streams.output.write("\nChoose region preset:\n");
+    streams.output.write(
+      `  a. ${REGIONS.china.label} (${REGIONS.china.endpointLabel})\n`
+    );
+    streams.output.write(
+      `  b. ${REGIONS.global.label} (${REGIONS.global.endpointLabel})\n`
+    );
 
     let regionAnswer = "";
     while (!["a", "b"].includes(regionAnswer)) {
-      regionAnswer = (await rl.question("Region preset [a/b]: ")).trim().toLowerCase();
+      regionAnswer = (await rl.question("Region preset [a/b]: "))
+        .trim()
+        .toLowerCase();
     }
 
     const region = regionAnswer === "b" ? "global" : "china";
     const regionConfig = REGIONS[region];
-    const existingConfig = detectExistingConfig();
+    const existingConfig = detectExistingConfig(selectedTargetDirs);
 
     let apiKey = "";
     let projectId = "";
@@ -240,8 +319,12 @@ async function promptConfig() {
       streams.output.write("\n");
       streams.output.write("Detected existing Lexmount skill configuration.\n");
       streams.output.write(`  File: ${existingConfig.envPath}\n`);
-      streams.output.write(`  Region preset: ${REGIONS[existingConfig.region].label} (${REGIONS[existingConfig.region].endpointLabel})\n`);
-      streams.output.write(`  LEXMOUNT_API_KEY: ${existingConfig.apiKey}\n`);
+      streams.output.write(
+        `  Region preset: ${REGIONS[existingConfig.region].label} (${REGIONS[existingConfig.region].endpointLabel})\n`
+      );
+      streams.output.write(
+        `  LEXMOUNT_API_KEY: ${maskSecret(existingConfig.apiKey)}\n`
+      );
       streams.output.write(`  LEXMOUNT_PROJECT_ID: ${existingConfig.projectId}\n`);
       if (existingConfig.rawBaseUrl) {
         streams.output.write(`  LEXMOUNT_BASE_URL: ${existingConfig.rawBaseUrl}\n`);
@@ -249,9 +332,11 @@ async function promptConfig() {
 
       const importAnswer = (
         await rl.question("Import this configuration into the installed skill? [Y/n]: ")
-      ).trim().toLowerCase();
+      )
+        .trim()
+        .toLowerCase();
 
-      if (importAnswer === "" || importAnswer === "y" || importAnswer === "yes") {
+      if (["", "y", "yes"].includes(importAnswer)) {
         apiKey = existingConfig.apiKey;
         projectId = existingConfig.projectId;
       }
@@ -265,16 +350,19 @@ async function promptConfig() {
       projectId = (await rl.question("LEXMOUNT_PROJECT_ID: ")).trim();
     }
 
-    const installDepsAnswer = (
-      await rl.question("Create ~/.codex/skills/lexmount-browser/.venv and install requirements now? [Y/n]: ")
-    ).trim().toLowerCase();
+    const bootstrapAnswer = (
+      await rl.question("Bootstrap skill-local runtime environment now? [Y/n]: ")
+    )
+      .trim()
+      .toLowerCase();
 
     return {
+      target,
       region,
       apiKey,
       projectId,
       baseUrl: regionConfig.baseUrl,
-      installDeps: installDepsAnswer === "" || installDepsAnswer === "y" || installDepsAnswer === "yes",
+      bootstrap: ["", "y", "yes"].includes(bootstrapAnswer),
     };
   } finally {
     rl.close();
@@ -301,24 +389,23 @@ function pythonCommand() {
   return isWindows ? "python" : "python3";
 }
 
-function venvBinary(venvDir, name) {
-  if (isWindows) {
-    return path.join(venvDir, "Scripts", `${name}.exe`);
+function installSkill(targetDir, config) {
+  removeDirIfExists(targetDir);
+  ensureDir(path.dirname(targetDir));
+  copyRecursive(sourceSkillDir, targetDir);
+  fs.writeFileSync(path.join(targetDir, ".env"), envFileContent(config), "utf8");
+
+  if (config.bootstrap) {
+    runCommand(
+      pythonCommand(),
+      [path.join(targetDir, "scripts", "bootstrap_runtime.py")],
+      targetDir
+    );
   }
-  return path.join(venvDir, "bin", name);
-}
-
-function installPythonVenv() {
-  const venvDir = path.join(targetDir, ".venv");
-  const requirementsFile = path.join(targetDir, "requirements.txt");
-  const pipPath = venvBinary(venvDir, "pip");
-
-  runCommand(pythonCommand(), ["-m", "venv", venvDir], targetDir);
-  runCommand(pipPath, ["install", "-r", requirementsFile], targetDir);
 }
 
 function printHelp() {
-  console.log("Install the Lexmount Codex browser skill.");
+  console.log("Install the Lexmount browser skill backed by lex-browser-runtime.");
   console.log("");
   console.log("Usage:");
   console.log("  npx @lexmount/browser-skill-installer");
@@ -327,6 +414,7 @@ function printHelp() {
   console.log("Non-interactive mode:");
   console.log("  Set LEXMOUNT_INSTALL_NONINTERACTIVE=1");
   console.log("  Set LEXMOUNT_API_KEY and LEXMOUNT_PROJECT_ID");
+  console.log("  Optional: LEXMOUNT_INSTALL_TARGET=codex|claude|both");
   console.log("  Optional: LEXMOUNT_INSTALL_REGION=china|global");
   console.log("  Optional: LEXMOUNT_INSTALL_DEPS=1|0");
 }
@@ -340,51 +428,35 @@ async function main() {
 
   const config = await promptConfig();
   if (!config.apiKey || !config.projectId) {
-    throw new Error("LEXMOUNT_API_KEY and LEXMOUNT_PROJECT_ID are required. If prompts did not appear, rerun this command from an interactive terminal.");
+    throw new Error(
+      "LEXMOUNT_API_KEY and LEXMOUNT_PROJECT_ID are required. If prompts did not appear, rerun this command from an interactive terminal."
+    );
   }
 
-  ensureDir(skillsDir);
-  removeDirIfExists(targetDir);
-  ensureDir(targetDir);
-
-  for (const entry of entriesToCopy) {
-    copyRecursive(path.join(packageRoot, entry), path.join(targetDir, entry));
+  const selectedTargetDirs = targetDirectories(config.target);
+  for (const targetDir of selectedTargetDirs) {
+    installSkill(targetDir, config);
   }
 
-  fs.writeFileSync(path.join(targetDir, ".env"), envFileContent(config), "utf8");
-
-  if (config.installDeps) {
-    console.log("");
-    console.log("Creating skill-local virtual environment and installing Python dependencies...");
-    installPythonVenv();
-  }
-
-  console.log(`Installed skill to ${targetDir}`);
   console.log("");
-  console.log("Saved configuration to:");
-  console.log(`  ${path.join(targetDir, ".env")}`);
-  console.log("");
-  console.log("Create the virtual environment inside the installed skill directory:");
-  console.log(`  ${path.join(targetDir, ".venv")}`);
-  console.log("");
-  if (config.installDeps) {
-    console.log("Python dependencies were installed into:");
-    console.log(`  ${path.join(targetDir, ".venv")}`);
-  } else {
-    const venvDir = path.join(targetDir, ".venv");
-    const pipPath = venvBinary(venvDir, "pip");
-    console.log("Initialize Python dependencies with:");
-    console.log(`  ${pythonCommand()} -m venv ${venvDir}`);
-    console.log(`  ${pipPath} install -r ${path.join(targetDir, "requirements.txt")}`);
+  console.log("Installed Lexmount browser skill:");
+  for (const targetDir of selectedTargetDirs) {
+    console.log(`  ${targetDir}`);
   }
   console.log("");
-  console.log("You can update these values later by editing that file.");
-  console.log("Restart Codex to ensure the new skill is discovered.");
+  console.log("Saved configuration into each installed skill .env file.");
+  console.log("");
+  console.log("Example command:");
+  console.log(
+    `  ${path.join(selectedTargetDirs[0], "scripts", "lexmount-browser")} session create`
+  );
+  console.log("");
+  console.log("Restart Codex or Claude Code so the new skill is discovered.");
   finalizeTerminal();
 }
 
 main().catch((error) => {
-  console.error(`Failed to install skill into ${targetDir}`);
+  console.error("Failed to install Lexmount browser skill.");
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

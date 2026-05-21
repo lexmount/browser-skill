@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Stable installed-skill wrapper for the lex-browser-runtime CLI."""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+SKILL_DIR = SCRIPT_DIR.parent
+VENV_BIN = "Scripts" if sys.platform == "win32" else "bin"
+VENV_ENTRYPOINT = SKILL_DIR / ".venv" / VENV_BIN / "lex-browser-runtime"
+BOOTSTRAP = SCRIPT_DIR / "bootstrap_runtime.py"
+
+
+def _parse_env_value(raw_value: str) -> str:
+    value = raw_value.strip()
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        parsed = []
+        index = 1
+        while index < len(value) - 1:
+            char = value[index]
+            if char == "\\" and index < len(value) - 2:
+                index += 1
+                parsed.append(value[index])
+            else:
+                parsed.append(char)
+            index += 1
+        return "".join(parsed)
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1]
+    return value
+
+
+def _load_skill_env() -> None:
+    env_path = SKILL_DIR / ".env"
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        os.environ.setdefault(key, _parse_env_value(value))
+
+
+def _runtime_command() -> str:
+    if VENV_ENTRYPOINT.exists():
+        return str(VENV_ENTRYPOINT)
+
+    command = shutil.which("lex-browser-runtime")
+    if command:
+        return command
+
+    if os.environ.get("LEX_BROWSER_RUNTIME_NO_BOOTSTRAP") == "1":
+        raise SystemExit(
+            "lex-browser-runtime is not installed. Run "
+            f"`python3 {BOOTSTRAP}` or unset LEX_BROWSER_RUNTIME_NO_BOOTSTRAP."
+        )
+
+    subprocess.check_call([sys.executable, str(BOOTSTRAP)])
+    if VENV_ENTRYPOINT.exists():
+        return str(VENV_ENTRYPOINT)
+    raise SystemExit(f"Bootstrap completed but {VENV_ENTRYPOINT} was not created")
+
+
+def main(argv: list[str] | None = None) -> int:
+    _load_skill_env()
+    args = list(sys.argv[1:] if argv is None else argv)
+    command = _runtime_command()
+    completed = subprocess.run([command, *args], check=False)
+    return completed.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
