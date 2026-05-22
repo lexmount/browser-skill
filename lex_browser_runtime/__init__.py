@@ -25,6 +25,16 @@ from lex_browser_runtime.registry import (
     SiteNotice,
 )
 from lex_browser_runtime.runtime import LexBrowserRuntime
+from lex_browser_runtime.research import (
+    ResearchJob,
+    ResearchJobResult,
+    ResearchRoute,
+    ResearchRunSummary,
+    ResearchSource,
+    research_run_id,
+    route_research,
+    run_research,
+)
 from lex_browser_runtime.telemetry import RuntimeActionTrace, RuntimeTrace
 
 __all__ = [
@@ -45,8 +55,16 @@ __all__ = [
     "RuntimeAssist",
     "RuntimeActionTrace",
     "RuntimeCompletion",
+    "ResearchJob",
+    "ResearchJobResult",
+    "ResearchRoute",
+    "ResearchRunSummary",
+    "ResearchSource",
     "RuntimeStrategy",
     "RuntimeStrategyAction",
     "RuntimeTrace",
     "SiteNotice",
+    "research_run_id",
+    "route_research",
+    "run_research",
 ]

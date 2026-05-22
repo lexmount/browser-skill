@@ -1,6 +1,6 @@
 ---
 name: lexmount-browser
-description: Use when the user wants Claude Code or Codex to create, reuse, inspect, or operate a Lexmount remote browser through lex-browser-runtime. Provides a stable installed-skill wrapper for session/context lifecycle, direct-url, primitive browser actions, and browser case validation/run without hand-written curl or ad hoc Playwright scripts.
+description: Use when the user wants Claude Code or Codex to create, reuse, inspect, or operate a Lexmount remote browser through lex-browser-runtime, including multi-source browser research when the user asks to use Lexmount Browser. Provides a stable installed-skill wrapper for session/context lifecycle, direct-url, primitive browser actions, browser case validation/run, and research route/run without hand-written curl or ad hoc Playwright scripts.
 allowed-tools: Bash
 ---
 
@@ -79,6 +79,13 @@ Run a repeatable case:
 "$SKILL_DIR/scripts/lexmount-browser" case run --file "$SKILL_DIR/examples/basic-open.json" --stop-on-error --close-created-session
 ```
 
+Run multi-source browser research:
+
+```bash
+"$SKILL_DIR/scripts/lexmount-browser" research route --query "最好吃的红烧肉" --preset food
+"$SKILL_DIR/scripts/lexmount-browser" research run --query "最好吃的红烧肉" --preset food --max-sites 10 --concurrency 5
+```
+
 ## Preferred Workflow
 
 1. Use this skill before writing raw Lexmount SDK snippets, curl calls, or
@@ -87,12 +94,36 @@ Run a repeatable case:
 3. Use `action ...` commands for one-off browser operations.
 4. Use `case validate` and `case run` when the flow has multiple deterministic
    browser steps or should be reproducible.
-5. Return or summarize the CLI JSON payloads instead of translating them into
+5. Use `research route` and `research run` for recommendation, comparison, or
+   evidence-gathering tasks where the user asks to use Lexmount Browser.
+6. Return or summarize the CLI JSON payloads instead of translating them into
    vague prose.
-6. If credentials are missing, tell the user exactly which environment variable
+7. If credentials are missing, tell the user exactly which environment variable
    is absent.
-7. If session creation hits a parallel limit, surface the structured
+8. If session creation hits a parallel limit, surface the structured
    `browser_parallel_limit_reached` error and suggest closing existing sessions.
+
+## Research Workflow
+
+For a query such as `找最好吃的红烧肉，用 Lexmount Browser 完成`, keep Claude
+Code or Codex as the planner and final summarizer. Use the runtime only for
+routing, concurrent browser execution, extraction, and artifact generation.
+
+Recommended flow:
+
+1. Run `research route` if you need to inspect or trim the planned sources.
+2. Run `research run` with `--concurrency 5` unless the user or environment
+   calls for a lower limit.
+3. Read the returned `summary.json`, `sources.jsonl`, and `events.jsonl`.
+4. Summarize the answer from the extracted evidence. Mention which sources
+   succeeded or failed when it changes confidence.
+
+Research artifacts:
+
+- `routes.json`: deterministic source jobs and URLs.
+- `events.jsonl`: start/finish timeline for each source job.
+- `sources.jsonl`: one compact evidence record per source.
+- `summary.json`: aggregate status, output paths, jobs, and extracted results.
 
 ## Command Map
 
@@ -131,6 +162,14 @@ Case files:
 "$SKILL_DIR/scripts/lexmount-browser" case run --file /path/to/case.json --stop-on-error --close-created-session
 ```
 
+Research:
+
+```bash
+"$SKILL_DIR/scripts/lexmount-browser" research route --query "最好吃的红烧肉" --preset food
+"$SKILL_DIR/scripts/lexmount-browser" research run --query "最好吃的红烧肉" --preset food --max-sites 10 --concurrency 5
+"$SKILL_DIR/scripts/lexmount-browser" research run --query "best browser automation news" --preset web --max-sites 2
+```
+
 Compatibility aliases:
 
 ```bash
@@ -144,9 +183,8 @@ Compatibility aliases:
 
 This migrated skill covers the core `browser-skill` path:
 session/context lifecycle, direct URL generation, primitive Playwright-backed
-actions, and single case validate/run.
+actions, single case validate/run, and multi-source research route/run.
 
-Batch retry/watch and producer/consumer research templates from the old
-`lexmount/browser-skill` package are intentionally not part of this installed
-skill yet. Use separate runtime PRs for those so the runtime layer stays
-reviewable.
+Batch retry/watch and full producer/consumer orchestration templates are
+intentionally not part of this installed skill yet. Use separate runtime PRs for
+those so the runtime layer stays reviewable.
