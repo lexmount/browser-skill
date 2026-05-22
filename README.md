@@ -31,6 +31,8 @@ this package instead of owning their own Lexmount lifecycle/action implementatio
   Lexmount session id, or direct shared websocket URL.
 - Validate and run browser-skill case files with JSONL events and summary
   artifacts.
+- Route and run multi-source browser research jobs with concurrent Lexmount
+  sessions and structured evidence artifacts for an outer agent to summarize.
 - Load runtime capability knowledge from adapter JSON and site-hint YAML files.
 - Fetch adapter-approved public APIs with pre/post redirect URL safety checks.
 - Compact known API/page responses into stable, answerable runtime observations.
@@ -46,9 +48,9 @@ this package instead of owning their own Lexmount lifecycle/action implementatio
   directly or the thin local CLI.
 - The first SDK milestone does not integrate Skyvern, Agent-TARS, Claude Code, or
   OpenAI CUA.
-- Batch retry/watch and producer/consumer research templates from `browser-skill`
-  are intentionally kept out of this case extraction and should move in separate
-  PRs.
+- Batch retry/watch and full producer/consumer orchestration templates from
+  `browser-skill` are intentionally kept out of this extraction and should move
+  in separate PRs.
 
 ## CLI Surface
 
@@ -73,6 +75,8 @@ lex-browser-runtime action open-url --session-id <id> --url https://example.com
 lex-browser-runtime action snapshot --session-id <id>
 lex-browser-runtime case validate --file examples/basic-open.json
 lex-browser-runtime case run --file examples/basic-open.json --stop-on-error
+lex-browser-runtime research route --query "最好吃的红烧肉" --preset food
+lex-browser-runtime research run --query "最好吃的红烧肉" --preset food --max-sites 10 --concurrency 5
 ```
 
 The CLI emits structured JSON compatible with the original browser skill helper,
@@ -126,9 +130,17 @@ After installation, agents should call the stable wrapper:
 ~/.codex/skills/lexmount-browser/scripts/lexmount-browser session create
 ~/.codex/skills/lexmount-browser/scripts/lexmount-browser action snapshot --session-id <id>
 ~/.codex/skills/lexmount-browser/scripts/lexmount-browser case run --file ~/.codex/skills/lexmount-browser/examples/basic-open.json --close-created-session
+~/.codex/skills/lexmount-browser/scripts/lexmount-browser research run --query "最好吃的红烧肉" --preset food --max-sites 10 --concurrency 5
 ```
 
 For Claude Code, use the same path under `~/.claude/skills/lexmount-browser`.
+
+For research or recommendation tasks, the installed skill should not become a
+second LLM agent. Claude Code or Codex remains responsible for query
+interpretation, source selection adjustments, and the final answer. The runtime
+runner handles deterministic routing, concurrent Lexmount browser sessions, page
+extraction, and artifact writing. A run returns paths for `routes.json`,
+`events.jsonl`, `sources.jsonl`, and `summary.json`.
 
 ## npm Installer Release
 

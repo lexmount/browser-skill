@@ -30,6 +30,7 @@ from lex_browser_runtime.browser.models import (
     BrowserParallelLimitError,
     BrowserRuntimeError,
 )
+from lex_browser_runtime.research import route_research, run_research
 
 
 def _json_dump(payload: dict[str, Any], exit_code: int = 0) -> NoReturn:
@@ -366,6 +367,42 @@ def cmd_case_run(args: argparse.Namespace) -> None:
     _json_dump(summary.model_dump(mode="json"), exit_code=0 if summary.ok else 1)
 
 
+def cmd_research_route(args: argparse.Namespace) -> None:
+    command = "research.route"
+    try:
+        route = route_research(
+            query=args.query,
+            preset=args.preset,
+            sites=args.sites,
+            max_sites=args.max_sites,
+        )
+    except Exception as exc:
+        _failure_from_exception(command, exc)
+    _json_dump(route.model_dump(mode="json"))
+
+
+def cmd_research_run(args: argparse.Namespace) -> None:
+    command = "research.run"
+    try:
+        summary = run_research(
+            query=args.query,
+            preset=args.preset,
+            sites=args.sites,
+            max_sites=args.max_sites,
+            concurrency=args.concurrency,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            timeout_ms=args.timeout_ms,
+            wait_after_ms=args.wait_after_ms,
+            max_chars=args.max_chars,
+            browser_mode=args.browser_mode,
+            keep_sessions=args.keep_sessions,
+        )
+    except Exception as exc:
+        _failure_from_exception(command, exc)
+    _json_dump(summary.model_dump(mode="json"), exit_code=0 if summary.ok else 1)
+
+
 def _add_session_target_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--connect-url",
@@ -563,6 +600,57 @@ def build_parser() -> argparse.ArgumentParser:
     case_run.add_argument("--stop-on-error", action="store_true")
     case_run.add_argument("--close-created-session", action="store_true")
     case_run.set_defaults(func=cmd_case_run)
+
+    research = subparsers.add_parser(
+        "research",
+        help="Route and run multi-source browser research",
+    )
+    research_subparsers = research.add_subparsers(
+        dest="research_command",
+        required=True,
+    )
+
+    research_route = research_subparsers.add_parser(
+        "route",
+        help="Build source-specific research jobs without opening browsers",
+    )
+    research_route.add_argument("--query", required=True)
+    research_route.add_argument("--preset", default="food", choices=["food", "web"])
+    research_route.add_argument(
+        "--sites",
+        help="Comma-separated source ids such as baidu,bing,xiaohongshu",
+    )
+    research_route.add_argument("--max-sites", type=int, default=10)
+    research_route.set_defaults(func=cmd_research_route)
+
+    research_run = research_subparsers.add_parser(
+        "run",
+        help="Open Lexmount browser sessions and extract source evidence",
+    )
+    research_run.add_argument("--query", required=True)
+    research_run.add_argument("--preset", default="food", choices=["food", "web"])
+    research_run.add_argument(
+        "--sites",
+        help="Comma-separated source ids such as baidu,bing,xiaohongshu",
+    )
+    research_run.add_argument("--max-sites", type=int, default=10)
+    research_run.add_argument("--concurrency", type=int, default=5)
+    research_run.add_argument("--output-dir")
+    research_run.add_argument("--run-id")
+    research_run.add_argument("--timeout-ms", type=float, default=30000)
+    research_run.add_argument("--wait-after-ms", type=float, default=1000)
+    research_run.add_argument("--max-chars", type=int, default=6000)
+    research_run.add_argument(
+        "--browser-mode",
+        default="normal",
+        type=_normalize_browser_mode,
+    )
+    research_run.add_argument(
+        "--keep-sessions",
+        action="store_true",
+        help="Keep created Lexmount sessions open for debugging",
+    )
+    research_run.set_defaults(func=cmd_research_run)
 
     prepare = subparsers.add_parser(
         "prepare",

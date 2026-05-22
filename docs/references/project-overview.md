@@ -13,12 +13,13 @@ experiment into a reusable package while preserving benchmark gains.
 
 ## System Boundaries
 
-- Inputs: browser session requests, task URLs, adapter JSON, site-hint YAML, and
-  runtime action requests from an upper-layer agent.
+- Inputs: browser session requests, task URLs, research queries, adapter JSON,
+  site-hint YAML, and runtime action requests from an upper-layer agent.
 - Core processing: create/connect/close browser sessions, match runtime
-  capabilities, and record runtime telemetry.
-- Outputs: browser session descriptors, matched capability summaries, and
-  benchmark-friendly runtime traces.
+  capabilities, route research jobs, run concurrent browser extraction, and
+  record runtime telemetry.
+- Outputs: browser session descriptors, matched capability summaries, research
+  evidence artifacts, and benchmark-friendly runtime traces.
 - External systems: Lexmount browser service, Chrome DevTools Protocol endpoints,
   and benchmark harnesses such as `browseruse-bench-staging`.
 - Non-targets: LLM planning, full task execution, HTTP service, MCP server, or
@@ -44,13 +45,18 @@ second implementation. It currently covers the reusable base of
 `lexmount/browser-skill`: session lifecycle, context lifecycle, and direct
 shared websocket URL generation, plus primitive Playwright actions (`open-url`,
 `wait-selector`, `click`, `type`, `screenshot`, `eval`, `snapshot`) and single
-case validate/run.
+case validate/run. It also exposes multi-source research commands:
+`research route` builds deterministic source jobs without opening browsers, and
+`research run` executes those jobs concurrently through Lexmount sessions and
+writes compact evidence artifacts.
 
 The installable Claude Code / Codex skill lives in `skills/lexmount-browser`.
 Its scripts delegate to `lex-browser-runtime` and only own installation,
-credential loading, and stable command discovery. Batch retry/watch and research
-producer/consumer flows should land as separate runtime changes before being
-exposed through the skill.
+credential loading, and stable command discovery. The skill keeps the outer
+agent responsible for intent interpretation and final synthesis; the runtime
+owns browser execution, extraction, and artifacts. Batch retry/watch and full
+producer/consumer orchestration flows should land as separate runtime changes
+before being exposed through the skill.
 
 The skill is distributed through the npm package
 `@lexmount/browser-skill-installer`. The package copies
@@ -73,7 +79,20 @@ Provides a small SDK surface for callers.
 
 - Create/close browser sessions.
 - Match capabilities for a task or URL.
+- Route and run multi-source browser research jobs.
 - Record runtime action traces.
+
+### Research Runner
+
+Provides a deterministic browser execution primitive for open-ended research
+and recommendation tasks.
+
+- `route_research()` maps a query to preset source jobs, such as the `food`
+  preset used for restaurant and local recommendation demos.
+- `run_research()` runs source jobs concurrently in separate Lexmount sessions
+  and writes `routes.json`, `events.jsonl`, `sources.jsonl`, and `summary.json`.
+- The runner does not make final semantic judgments. Claude Code, Codex, or
+  another upper-layer agent reads the evidence and writes the answer.
 
 ### Telemetry Layer
 
@@ -89,6 +108,8 @@ make check
 uv run lex-browser-runtime --help
 python3 scripts/install_lexmount_browser_skill.py --target codex
 npm run release:npm:check
+uv run lex-browser-runtime research route --query "最好吃的红烧肉" --preset food
+uv run lex-browser-runtime research run --query "最好吃的红烧肉" --preset food --max-sites 10 --concurrency 5
 ```
 
 Equivalent low-level commands:
