@@ -17,7 +17,7 @@ from lex_browser_runtime.browser.lexmount import LexmountBrowserAdmin
 from lex_browser_runtime.browser.models import BrowserConfigError, BrowserRuntimeError
 
 ResearchPreset = Literal["food", "web"]
-
+DEFAULT_RESEARCH_CONCURRENCY = 5
 
 class ResearchSource(BaseModel):
     """One routeable public web source for runtime research."""
@@ -176,6 +176,8 @@ WEB_SOURCES: tuple[ResearchSource, ...] = (
     FOOD_SOURCES[0],
     FOOD_SOURCES[1],
 )
+
+
 
 PRESET_SOURCES: dict[str, tuple[ResearchSource, ...]] = {
     "food": FOOD_SOURCES,
@@ -442,7 +444,7 @@ def run_research(
     preset: str = "food",
     sites: str | list[str] | tuple[str, ...] | None = None,
     max_sites: int = 10,
-    concurrency: int = 5,
+    concurrency: int = DEFAULT_RESEARCH_CONCURRENCY,
     output_dir: str | Path | None = None,
     run_id: str | None = None,
     timeout_ms: float = 30000,
