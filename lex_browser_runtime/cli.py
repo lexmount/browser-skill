@@ -30,8 +30,8 @@ from lex_browser_runtime.browser.models import (
     BrowserParallelLimitError,
     BrowserRuntimeError,
 )
+from lex_browser_runtime.config import get_default_research_concurrency
 from lex_browser_runtime.research import (
-    DEFAULT_RESEARCH_CONCURRENCY,
     route_research,
     run_research,
 )
@@ -393,7 +393,11 @@ def cmd_research_run(args: argparse.Namespace) -> None:
             preset=args.preset,
             sites=args.sites,
             max_sites=args.max_sites,
-            concurrency=args.concurrency,
+            concurrency=(
+                args.concurrency
+                if args.concurrency is not None
+                else get_default_research_concurrency()
+            ),
             output_dir=args.output_dir,
             run_id=args.run_id,
             timeout_ms=args.timeout_ms,
@@ -641,7 +645,7 @@ def build_parser() -> argparse.ArgumentParser:
     research_run.add_argument(
         "--concurrency",
         type=int,
-        default=DEFAULT_RESEARCH_CONCURRENCY,
+        default=None,
     )
     research_run.add_argument("--output-dir")
     research_run.add_argument("--run-id")
