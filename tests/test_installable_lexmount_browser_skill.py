@@ -47,7 +47,7 @@ def test_release_versions_are_aligned() -> None:
     package_lock = json.loads(PACKAGE_LOCK.read_text(encoding="utf-8"))
     pyproject = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
 
-    assert package["version"] == "0.2.1"
+    assert package["version"] == "0.2.2"
     assert package_lock["version"] == package["version"]
     assert package_lock["packages"][""]["version"] == package["version"]
     assert pyproject["project"]["version"] == package["version"]
