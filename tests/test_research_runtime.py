@@ -14,6 +14,10 @@ from lex_browser_runtime import (
     run_research,
 )
 from lex_browser_runtime.cli import main as cli_main
+from lex_browser_runtime.config import (
+    DEFAULT_RESEARCH_CONCURRENCY,
+    RESEARCH_CONCURRENCY_ENV,
+)
 
 
 def test_route_research_food_preset_builds_ten_source_jobs() -> None:
@@ -67,7 +71,101 @@ def test_cli_research_route_outputs_json(
     assert [job["source_id"] for job in payload["jobs"]] == ["baidu", "bing"]
 
 
-def test_run_research_uses_concurrency_and_writes_artifacts(tmp_path: Path) -> None:
+def test_cli_research_run_defaults_to_parallel_concurrency(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(RESEARCH_CONCURRENCY_ENV, raising=False)
+    captured: dict[str, object] = {}
+
+    class FakeSummary:
+        ok = True
+
+        def model_dump(self, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "command": "research.run",
+                "concurrency": captured["concurrency"],
+                "ok": True,
+            }
+
+    def fake_run_research(**kwargs: object) -> FakeSummary:
+        captured.update(kwargs)
+        return FakeSummary()
+
+    monkeypatch.setattr(
+        "lex_browser_runtime.cli.run_research",
+        fake_run_research,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main(
+            [
+                "research",
+                "run",
+                "--query",
+                "最好吃的红烧肉",
+                "--sites",
+                "baidu,bing",
+            ]
+        )
+
+    assert exc_info.value.code == 0
+    assert captured["concurrency"] == DEFAULT_RESEARCH_CONCURRENCY
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["concurrency"] == DEFAULT_RESEARCH_CONCURRENCY
+
+
+def test_cli_research_run_uses_configured_default_concurrency(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(RESEARCH_CONCURRENCY_ENV, "3")
+    captured: dict[str, object] = {}
+
+    class FakeSummary:
+        ok = True
+
+        def model_dump(self, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "command": "research.run",
+                "concurrency": captured["concurrency"],
+                "ok": True,
+            }
+
+    def fake_run_research(**kwargs: object) -> FakeSummary:
+        captured.update(kwargs)
+        return FakeSummary()
+
+    monkeypatch.setattr(
+        "lex_browser_runtime.cli.run_research",
+        fake_run_research,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main(
+            [
+                "research",
+                "run",
+                "--query",
+                "最好吃的红烧肉",
+                "--sites",
+                "baidu,bing",
+            ]
+        )
+
+    assert exc_info.value.code == 0
+    assert captured["concurrency"] == 3
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["concurrency"] == 3
+
+
+def test_run_research_uses_concurrency_and_writes_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(RESEARCH_CONCURRENCY_ENV, "3")
     lock = threading.Lock()
     active = 0
     max_active = 0

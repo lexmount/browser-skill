@@ -30,7 +30,11 @@ from lex_browser_runtime.browser.models import (
     BrowserParallelLimitError,
     BrowserRuntimeError,
 )
-from lex_browser_runtime.research import route_research, run_research
+from lex_browser_runtime.config import get_default_research_concurrency
+from lex_browser_runtime.research import (
+    route_research,
+    run_research,
+)
 
 
 def _json_dump(payload: dict[str, Any], exit_code: int = 0) -> NoReturn:
@@ -389,7 +393,11 @@ def cmd_research_run(args: argparse.Namespace) -> None:
             preset=args.preset,
             sites=args.sites,
             max_sites=args.max_sites,
-            concurrency=args.concurrency,
+            concurrency=(
+                args.concurrency
+                if args.concurrency is not None
+                else get_default_research_concurrency()
+            ),
             output_dir=args.output_dir,
             run_id=args.run_id,
             timeout_ms=args.timeout_ms,
@@ -634,7 +642,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated source ids such as baidu,bing,xiaohongshu",
     )
     research_run.add_argument("--max-sites", type=int, default=10)
-    research_run.add_argument("--concurrency", type=int, default=5)
+    research_run.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+    )
     research_run.add_argument("--output-dir")
     research_run.add_argument("--run-id")
     research_run.add_argument("--timeout-ms", type=float, default=30000)

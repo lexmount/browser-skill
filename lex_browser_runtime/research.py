@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from lex_browser_runtime.browser.lexmount import LexmountBrowserAdmin
 from lex_browser_runtime.browser.models import BrowserConfigError, BrowserRuntimeError
+from lex_browser_runtime.config import get_default_research_concurrency
 
 ResearchPreset = Literal["food", "web"]
 
@@ -176,6 +177,8 @@ WEB_SOURCES: tuple[ResearchSource, ...] = (
     FOOD_SOURCES[0],
     FOOD_SOURCES[1],
 )
+
+
 
 PRESET_SOURCES: dict[str, tuple[ResearchSource, ...]] = {
     "food": FOOD_SOURCES,
@@ -442,7 +445,7 @@ def run_research(
     preset: str = "food",
     sites: str | list[str] | tuple[str, ...] | None = None,
     max_sites: int = 10,
-    concurrency: int = 5,
+    concurrency: int | None = None,
     output_dir: str | Path | None = None,
     run_id: str | None = None,
     timeout_ms: float = 30000,
@@ -455,7 +458,10 @@ def run_research(
 ) -> ResearchRunSummary:
     """Run source jobs concurrently in separate Lexmount sessions."""
 
-    if concurrency <= 0:
+    resolved_concurrency = (
+        concurrency if concurrency is not None else get_default_research_concurrency()
+    )
+    if resolved_concurrency <= 0:
         raise BrowserConfigError("concurrency must be greater than 0")
     if timeout_ms <= 0:
         raise BrowserConfigError("timeout_ms must be greater than 0")
@@ -490,7 +496,7 @@ def run_research(
             query=route.query,
             preset=route.preset,
             job_count=len(route.jobs),
-            concurrency=concurrency,
+            concurrency=resolved_concurrency,
         ),
     )
 
@@ -532,7 +538,9 @@ def run_research(
             _append_jsonl(sources_path, result.model_dump(mode="json"))
         return result
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=resolved_concurrency,
+    ) as executor:
         results = list(executor.map(execute, route.jobs))
 
     success_count = sum(1 for result in results if result.ok)
@@ -549,7 +557,7 @@ def run_research(
         summary_path=str(summary_path),
         success_count=success_count,
         failure_count=failure_count,
-        concurrency=concurrency,
+        concurrency=resolved_concurrency,
         jobs=route.jobs,
         results=results,
     )
