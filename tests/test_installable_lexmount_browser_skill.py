@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tomllib
+import importlib.util
 from pathlib import Path
 
 
@@ -14,6 +15,7 @@ SKILL_DIR = REPO_ROOT / "skills" / "lexmount-browser"
 PACKAGE_JSON = REPO_ROOT / "package.json"
 PACKAGE_LOCK = REPO_ROOT / "package-lock.json"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
+RUNTIME_REQUIREMENT = SKILL_DIR / "runtime-requirement.txt"
 
 
 def test_installable_skill_has_runtime_first_instructions() -> None:
@@ -28,7 +30,17 @@ def test_installable_skill_has_runtime_first_instructions() -> None:
     assert "session create" in skill
     assert "case run" in skill
     assert "browser_parallel_limit_reached" in skill
-    assert "git+https://github.com/lexmount/browser-skill.git" in bootstrap
+    assert "runtime-requirement.txt" in bootstrap
+
+
+def test_skill_runtime_requirement_pins_current_release() -> None:
+    package = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
+    requirement = RUNTIME_REQUIREMENT.read_text(encoding="utf-8").strip()
+
+    assert requirement == (
+        "lex-browser-runtime[skill] @ "
+        f"git+https://github.com/lexmount/browser-skill.git@v{package['version']}"
+    )
 
 
 def test_npm_package_exposes_runtime_backed_skill_installer() -> None:
@@ -39,15 +51,35 @@ def test_npm_package_exposes_runtime_backed_skill_installer() -> None:
         "lexmount-browser-skill-install": "./tools/install-skill.mjs"
     }
     assert "skills/lexmount-browser/SKILL.md" in package["files"]
+    assert "skills/lexmount-browser/runtime-requirement.txt" in package["files"]
     assert "tools/install-skill.mjs" in package["files"]
 
+
+def test_bootstrap_reads_installed_skill_runtime_requirement(
+    tmp_path: Path, monkeypatch
+) -> None:
+    module_path = SKILL_DIR / "scripts" / "bootstrap_runtime.py"
+    spec = importlib.util.spec_from_file_location("bootstrap_runtime", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    skill_dir = tmp_path / "lexmount-browser"
+    skill_dir.mkdir()
+    requirement_path = skill_dir / "runtime-requirement.txt"
+    requirement_path.write_text("lex-browser-runtime[skill] @ pinned\n", encoding="utf-8")
+    monkeypatch.setattr(module, "SKILL_DIR", skill_dir)
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+
+    assert module._runtime_requirement() == "lex-browser-runtime[skill] @ pinned"
 
 def test_release_versions_are_aligned() -> None:
     package = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
     package_lock = json.loads(PACKAGE_LOCK.read_text(encoding="utf-8"))
     pyproject = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
 
-    assert package["version"] == "0.2.2"
+    assert package["version"] == "0.2.3"
     assert package_lock["version"] == package["version"]
     assert package_lock["packages"][""]["version"] == package["version"]
     assert pyproject["project"]["version"] == package["version"]

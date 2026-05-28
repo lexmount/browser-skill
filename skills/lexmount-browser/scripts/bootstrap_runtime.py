@@ -14,6 +14,7 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = SKILL_DIR.parents[1]
 VENV_DIR = SKILL_DIR / ".venv"
+RUNTIME_REQUIREMENT_FILENAME = "runtime-requirement.txt"
 DEFAULT_GIT_REQUIREMENT = (
     "lex-browser-runtime[skill] @ git+https://github.com/lexmount/browser-skill.git"
 )
@@ -30,6 +31,9 @@ def _runtime_requirement() -> str:
         REPO_ROOT / "lex_browser_runtime"
     ).is_dir():
         return f"{REPO_ROOT}[skill]"
+    runtime_requirement = SKILL_DIR / RUNTIME_REQUIREMENT_FILENAME
+    if runtime_requirement.exists():
+        return runtime_requirement.read_text(encoding="utf-8").strip()
     return DEFAULT_GIT_REQUIREMENT
 
 
