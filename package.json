@@ -1,6 +1,6 @@
 {
   "name": "@lexmount/browser-skill-installer",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "description": "Installer for the Lexmount browser skill backed by lex-browser-runtime",
   "type": "module",
   "scripts": {
@@ -39,6 +39,7 @@
     "README.md",
     "skills/lexmount-browser/.env.example",
     "skills/lexmount-browser/SKILL.md",
+    "skills/lexmount-browser/runtime-requirement.txt",
     "skills/lexmount-browser/examples/basic-open.json",
     "skills/lexmount-browser/scripts/bootstrap_runtime.py",
     "skills/lexmount-browser/scripts/lexmount-browser",
