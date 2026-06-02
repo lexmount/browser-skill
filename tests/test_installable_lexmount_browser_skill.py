@@ -33,6 +33,17 @@ def test_installable_skill_has_runtime_first_instructions() -> None:
     assert "runtime-requirement.txt" in bootstrap
 
 
+def test_base_skill_documents_observer_research_workflow() -> None:
+    skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "name: lexmount-browser" in skill
+    assert "Default research behavior" in skill
+    assert "observer serve" in skill
+    assert "LEX_BROWSER_OBSERVER_URL" in skill
+    assert "--keep-sessions" in skill
+    assert "lexmount-concurrency-browser" not in skill
+
+
 def test_skill_runtime_requirement_pins_current_release() -> None:
     package = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
     requirement = RUNTIME_REQUIREMENT.read_text(encoding="utf-8").strip()
@@ -79,7 +90,7 @@ def test_release_versions_are_aligned() -> None:
     package_lock = json.loads(PACKAGE_LOCK.read_text(encoding="utf-8"))
     pyproject = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
 
-    assert package["version"] == "0.2.3"
+    assert package["version"] == "0.2.4"
     assert package_lock["version"] == package["version"]
     assert package_lock["packages"][""]["version"] == package["version"]
     assert pyproject["project"]["version"] == package["version"]

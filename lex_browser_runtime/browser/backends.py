@@ -145,7 +145,7 @@ class LexmountBackend:
         self,
         request: CreateBrowserRequest,
     ) -> BrowserSessionInfo:
-        import lexmount as lexmount_sdk  # type: ignore[import-not-found]
+        import lexmount as lexmount_sdk  # type: ignore[import-not-found, import-untyped]
         from lexmount import (
             APIError,
             AuthenticationError,
@@ -153,7 +153,7 @@ class LexmountBackend:
             NetworkError,
             TimeoutError,
             ValidationError,
-        )  # type: ignore[import-not-found]
+        )  # type: ignore[import-not-found, import-untyped]
 
         client = None
         session = None
@@ -180,7 +180,7 @@ class LexmountBackend:
             )
             if runtime_session_proxy_cls is None:
                 try:
-                    from lexmount._sessions import (  # type: ignore[import-not-found]
+                    from lexmount._sessions import (  # type: ignore[import-not-found, import-untyped]
                         SessionProxyConfig as ImportedSessionProxyConfig,
                     )
 
