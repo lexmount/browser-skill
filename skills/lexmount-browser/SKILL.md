@@ -79,12 +79,21 @@ Run a repeatable case:
 "$SKILL_DIR/scripts/lexmount-browser" case run --file "$SKILL_DIR/examples/basic-open.json" --stop-on-error --close-created-session
 ```
 
-Run multi-source browser research:
+Run multi-source browser research through the observer UI by default:
 
 ```bash
-"$SKILL_DIR/scripts/lexmount-browser" research route --query "最好吃的红烧肉" --preset food
-"$SKILL_DIR/scripts/lexmount-browser" research run --query "最好吃的红烧肉" --preset food --max-sites 10 --concurrency 5
+"$SKILL_DIR/scripts/lexmount-browser" observer serve --host 127.0.0.1 --port 8765
+LEX_BROWSER_OBSERVER_URL=http://127.0.0.1:8765 \
+"$SKILL_DIR/scripts/lexmount-browser" research run \
+  --query "最好吃的红烧肉" \
+  --preset food \
+  --max-sites 5 \
+  --concurrency 5 \
+  --keep-sessions
 ```
+
+Use plain `research run` without observer only when the user explicitly asks for
+no UI, only artifacts, or a non-interactive run.
 
 ## Preferred Workflow
 
@@ -94,13 +103,17 @@ Run multi-source browser research:
 3. Use `action ...` commands for one-off browser operations.
 4. Use `case validate` and `case run` when the flow has multiple deterministic
    browser steps or should be reproducible.
-5. Use `research route` and `research run` for recommendation, comparison, or
-   evidence-gathering tasks where the user asks to use Lexmount Browser.
-6. Return or summarize the CLI JSON payloads instead of translating them into
+5. For recommendation, comparison, or evidence-gathering tasks where the user
+   asks to use Lexmount Browser, default to the observer research workflow:
+   start `observer serve`, open or report `http://127.0.0.1:8765`, set
+   `LEX_BROWSER_OBSERVER_URL`, and run research with kept sessions.
+6. Skip the observer only when the user explicitly asks for no UI, only
+   artifacts, or a non-interactive run.
+7. Return or summarize the CLI JSON payloads instead of translating them into
    vague prose.
-7. If credentials are missing, tell the user exactly which environment variable
+8. If credentials are missing, tell the user exactly which environment variable
    is absent.
-8. If session creation hits a parallel limit, surface the structured
+9. If session creation hits a parallel limit, surface the structured
    `browser_parallel_limit_reached` error and suggest closing existing sessions.
 
 ## Research Workflow
@@ -109,13 +122,22 @@ For a query such as `找最好吃的红烧肉，用 Lexmount Browser 完成`, ke
 Code or Codex as the planner and final summarizer. Use the runtime only for
 routing, concurrent browser execution, extraction, and artifact generation.
 
+Default research behavior: when the user says to use the `lexmount-browser`
+skill for research, search, recommendation, or comparison, trigger the local
+observer frontend by default. The expected first visible effect is the observer
+page at `http://127.0.0.1:8765`, followed by browser cards appearing as
+`browser_created` events arrive.
+
 Recommended flow:
 
-1. Run `research route` if you need to inspect or trim the planned sources.
-2. Run `research run` with `--concurrency 5` unless the user or environment
-   calls for a lower limit.
-3. Read the returned `summary.json`, `sources.jsonl`, and `events.jsonl`.
-4. Summarize the answer from the extracted evidence. Mention which sources
+1. Start `observer serve --host 127.0.0.1 --port 8765` unless it is already
+   running.
+2. Open or report `http://127.0.0.1:8765` so the user can watch the run.
+3. Run `research run` with `LEX_BROWSER_OBSERVER_URL=http://127.0.0.1:8765`,
+   `--concurrency 5`, and `--keep-sessions` unless the user or environment
+   calls for different limits.
+4. Read the returned `summary.json`, `sources.jsonl`, and `events.jsonl`.
+5. Summarize the answer from the extracted evidence. Mention which sources
    succeeded or failed when it changes confidence.
 
 Research artifacts:
@@ -124,6 +146,34 @@ Research artifacts:
 - `events.jsonl`: start/finish timeline for each source job.
 - `sources.jsonl`: one compact evidence record per source.
 - `summary.json`: aggregate status, output paths, jobs, and extracted results.
+
+## Observer Research Workflow
+
+Use this workflow by default for research prompts. It gives the user a local
+page showing each concurrent Lexmount browser window while Codex or Claude Code
+still writes the final answer.
+
+Start the observer in one shell:
+
+```bash
+"$SKILL_DIR/scripts/lexmount-browser" observer serve --host 127.0.0.1 --port 8765
+```
+
+Then run research with the observer URL:
+
+```bash
+LEX_BROWSER_OBSERVER_URL=http://127.0.0.1:8765 \
+"$SKILL_DIR/scripts/lexmount-browser" research run \
+  --query "最好吃的红烧肉" \
+  --preset food \
+  --max-sites 5 \
+  --concurrency 5 \
+  --keep-sessions
+```
+
+The observer page shows browser inspect windows and run activity. After the run,
+read `summary.json`, `sources.jsonl`, and `events.jsonl`, then write the final
+answer from the extracted evidence. Close kept sessions when the demo is done.
 
 ## Command Map
 
@@ -165,6 +215,7 @@ Case files:
 Research:
 
 ```bash
+"$SKILL_DIR/scripts/lexmount-browser" observer serve --host 127.0.0.1 --port 8765
 "$SKILL_DIR/scripts/lexmount-browser" research route --query "最好吃的红烧肉" --preset food
 "$SKILL_DIR/scripts/lexmount-browser" research run --query "最好吃的红烧肉" --preset food --max-sites 10 --concurrency 5
 "$SKILL_DIR/scripts/lexmount-browser" research run --query "best browser automation news" --preset web --max-sites 2

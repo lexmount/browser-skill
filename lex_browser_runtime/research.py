@@ -18,6 +18,7 @@ from lex_browser_runtime.browser.models import BrowserConfigError, BrowserRuntim
 from lex_browser_runtime.config import get_default_research_concurrency
 
 ResearchPreset = Literal["food", "web"]
+ResearchEventSink = Callable[[dict[str, Any]], None]
 
 
 class ResearchSource(BaseModel):
@@ -368,6 +369,7 @@ def _run_research_job(
     max_chars: int,
     browser_mode: str,
     keep_sessions: bool,
+    record_event: Callable[..., None] | None = None,
 ) -> ResearchJobResult:
     started_at = time.time()
     session_id: str | None = None
@@ -378,6 +380,15 @@ def _run_research_job(
         session = session_result.session
         session_id = session.session_id
         inspect_url = session.inspect_url or session.inspect_url_dbg
+        if record_event is not None:
+            record_event(
+                "browser_created",
+                source_id=job.source_id,
+                source_name=job.source_name,
+                url=job.url,
+                session_id=session_id,
+                inspect_url=inspect_url,
+            )
         if not session.connect_url:
             raise BrowserRuntimeError(
                 "Created research session did not expose connect_url"
@@ -433,6 +444,15 @@ def _run_research_job(
         if session_id and not keep_sessions:
             try:
                 admin.close_session(session_id)
+                if record_event is not None:
+                    record_event(
+                        "browser_closed",
+                        source_id=job.source_id,
+                        source_name=job.source_name,
+                        url=job.url,
+                        session_id=session_id,
+                        inspect_url=inspect_url,
+                    )
             except Exception:
                 # The job result already carries the primary failure/success.
                 # Cleanup failure should not hide page evidence from the caller.
@@ -455,6 +475,7 @@ def run_research(
     keep_sessions: bool = False,
     admin_factory: Callable[[], LexmountBrowserAdmin] = LexmountBrowserAdmin,
     job_runner: Callable[[ResearchJob], ResearchJobResult] | None = None,
+    on_event: ResearchEventSink | None = None,
 ) -> ResearchRunSummary:
     """Run source jobs concurrently in separate Lexmount sessions."""
 
@@ -489,28 +510,29 @@ def run_research(
     )
 
     lock = threading.Lock()
-    _append_jsonl(
-        events_path,
-        _event_payload(
-            "research_started",
-            query=route.query,
-            preset=route.preset,
-            job_count=len(route.jobs),
-            concurrency=resolved_concurrency,
-        ),
+
+    def record_event(event_type: str, **payload: Any) -> None:
+        event = _event_payload(event_type, **payload)
+        with lock:
+            _append_jsonl(events_path, event)
+            if on_event is not None:
+                on_event(event)
+
+    record_event(
+        "research_started",
+        query=route.query,
+        preset=route.preset,
+        job_count=len(route.jobs),
+        concurrency=resolved_concurrency,
     )
 
     def execute(job: ResearchJob) -> ResearchJobResult:
-        with lock:
-            _append_jsonl(
-                events_path,
-                _event_payload(
-                    "job_started",
-                    source_id=job.source_id,
-                    source_name=job.source_name,
-                    url=job.url,
-                ),
-            )
+        record_event(
+            "job_started",
+            source_id=job.source_id,
+            source_name=job.source_name,
+            url=job.url,
+        )
         if job_runner is not None:
             result = job_runner(job)
         else:
@@ -522,19 +544,18 @@ def run_research(
                 max_chars=max_chars,
                 browser_mode=browser_mode,
                 keep_sessions=keep_sessions,
+                record_event=record_event,
             )
+        record_event(
+            "job_finished",
+            source_id=job.source_id,
+            source_name=job.source_name,
+            ok=result.ok,
+            duration_ms=result.duration_ms,
+            error=result.error,
+            message=result.message,
+        )
         with lock:
-            _append_jsonl(
-                events_path,
-                _event_payload(
-                    "job_finished",
-                    source_id=job.source_id,
-                    source_name=job.source_name,
-                    ok=result.ok,
-                    duration_ms=result.duration_ms,
-                    error=result.error,
-                ),
-            )
             _append_jsonl(sources_path, result.model_dump(mode="json"))
         return result
 
@@ -561,14 +582,11 @@ def run_research(
         jobs=route.jobs,
         results=results,
     )
-    _append_jsonl(
-        events_path,
-        _event_payload(
-            "research_finished",
-            ok=summary.ok,
-            success_count=success_count,
-            failure_count=failure_count,
-        ),
+    record_event(
+        "research_finished",
+        ok=summary.ok,
+        success_count=success_count,
+        failure_count=failure_count,
     )
     summary_path.write_text(
         summary.model_dump_json(indent=2, by_alias=True) + "\n",

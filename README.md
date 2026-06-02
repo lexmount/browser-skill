@@ -130,8 +130,20 @@ After installation, agents should call the stable wrapper:
 ~/.codex/skills/lexmount-browser/scripts/lexmount-browser session create
 ~/.codex/skills/lexmount-browser/scripts/lexmount-browser action snapshot --session-id <id>
 ~/.codex/skills/lexmount-browser/scripts/lexmount-browser case run --file ~/.codex/skills/lexmount-browser/examples/basic-open.json --close-created-session
-~/.codex/skills/lexmount-browser/scripts/lexmount-browser research run --query "最好吃的红烧肉" --preset food --max-sites 10 --concurrency 5
 ```
+
+For live research observation, start the local observer first:
+
+```bash
+~/.codex/skills/lexmount-browser/scripts/lexmount-browser observer serve --host 127.0.0.1 --port 8765
+```
+
+Then ask Codex to run Lexmount Browser research in natural language, for
+example: `用 Lexmount Browser 帮我查最好吃的红烧肉`. Codex will invoke the
+skill runtime and route live research events to the local observer page at
+`http://127.0.0.1:8765`. While Codex is searching, that page shows the live
+browser windows it opened, the current progress, and the final answer when the
+run finishes. You do not need to run `research run` manually when using Codex.
 
 For Claude Code, use the same path under `~/.claude/skills/lexmount-browser`.
 

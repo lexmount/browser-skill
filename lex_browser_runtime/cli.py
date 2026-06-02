@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from typing import Any, NoReturn
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -31,7 +32,9 @@ from lex_browser_runtime.browser.models import (
     BrowserRuntimeError,
 )
 from lex_browser_runtime.config import get_default_research_concurrency
+from lex_browser_runtime.observer import ObserverEventPublisher, serve_observer
 from lex_browser_runtime.research import (
+    research_run_id,
     route_research,
     run_research,
 )
@@ -388,27 +391,45 @@ def cmd_research_route(args: argparse.Namespace) -> None:
 def cmd_research_run(args: argparse.Namespace) -> None:
     command = "research.run"
     try:
-        summary = run_research(
-            query=args.query,
-            preset=args.preset,
-            sites=args.sites,
-            max_sites=args.max_sites,
-            concurrency=(
+        observer_url = args.observer_url or os.environ.get("LEX_BROWSER_OBSERVER_URL")
+        resolved_run_id = args.run_id or (
+            research_run_id() if observer_url else args.run_id
+        )
+        run_kwargs = {
+            "query": args.query,
+            "preset": args.preset,
+            "sites": args.sites,
+            "max_sites": args.max_sites,
+            "concurrency": (
                 args.concurrency
                 if args.concurrency is not None
                 else get_default_research_concurrency()
             ),
-            output_dir=args.output_dir,
-            run_id=args.run_id,
-            timeout_ms=args.timeout_ms,
-            wait_after_ms=args.wait_after_ms,
-            max_chars=args.max_chars,
-            browser_mode=args.browser_mode,
-            keep_sessions=args.keep_sessions,
-        )
+            "output_dir": args.output_dir,
+            "run_id": resolved_run_id,
+            "timeout_ms": args.timeout_ms,
+            "wait_after_ms": args.wait_after_ms,
+            "max_chars": args.max_chars,
+            "browser_mode": args.browser_mode,
+            "keep_sessions": args.keep_sessions,
+        }
+        if observer_url:
+            with ObserverEventPublisher(
+                observer_url,
+                run_id=resolved_run_id,
+                query=args.query,
+            ) as publisher:
+                summary = run_research(**run_kwargs, on_event=publisher.emit)
+                publisher.finish(summary.model_dump(mode="json"))
+        else:
+            summary = run_research(**run_kwargs)
     except Exception as exc:
         _failure_from_exception(command, exc)
     _json_dump(summary.model_dump(mode="json"), exit_code=0 if summary.ok else 1)
+
+
+def cmd_observer_serve(args: argparse.Namespace) -> None:
+    serve_observer(host=args.host, port=args.port)
 
 
 def _add_session_target_args(parser: argparse.ArgumentParser) -> None:
@@ -649,6 +670,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     research_run.add_argument("--output-dir")
     research_run.add_argument("--run-id")
+    research_run.add_argument(
+        "--observer-url",
+        help=(
+            "Push live browser events to a local observer server. "
+            "Defaults to LEX_BROWSER_OBSERVER_URL when set."
+        ),
+    )
     research_run.add_argument("--timeout-ms", type=float, default=30000)
     research_run.add_argument("--wait-after-ms", type=float, default=1000)
     research_run.add_argument("--max-chars", type=int, default=6000)
@@ -663,6 +691,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep created Lexmount sessions open for debugging",
     )
     research_run.set_defaults(func=cmd_research_run)
+
+    observer = subparsers.add_parser(
+        "observer",
+        help="Serve the local browser research observer UI",
+    )
+    observer_subparsers = observer.add_subparsers(
+        dest="observer_command",
+        required=True,
+    )
+    observer_serve = observer_subparsers.add_parser(
+        "serve",
+        help="Start the local browser research observer UI",
+    )
+    observer_serve.add_argument("--host", default="127.0.0.1")
+    observer_serve.add_argument("--port", type=int, default=8765)
+    observer_serve.set_defaults(func=cmd_observer_serve)
 
     prepare = subparsers.add_parser(
         "prepare",

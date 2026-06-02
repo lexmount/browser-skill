@@ -228,15 +228,15 @@ def load_lexmount_modules() -> LexmountModules:
     """Import the Lexmount SDK and return the classes used by runtime helpers."""
 
     try:
-        from lexmount import Lexmount  # type: ignore[import-not-found]
+        from lexmount import Lexmount  # type: ignore[import-not-found, import-untyped]
 
         try:
-            from lexmount.exceptions import (  # type: ignore[import-not-found]
+            from lexmount.exceptions import (  # type: ignore[import-not-found, import-untyped]
                 LexmountError,
                 ValidationError,
             )
         except ImportError:
-            from lexmount import ValidationError  # type: ignore[import-not-found]
+            from lexmount import ValidationError  # type: ignore[import-not-found, import-untyped]
 
             LexmountError = Exception
     except ImportError as exc:
