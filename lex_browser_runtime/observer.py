@@ -402,7 +402,7 @@ INDEX_HTML = """<!doctype html>
     const closeRun = document.querySelector("#closeRun");
     let currentRunId = null;
     let events = null;
-    const browsers = new Map();
+    const browserSlots = new Map();
     let visibleEventCount = 0;
     let latestPoll = null;
 
@@ -419,6 +419,9 @@ INDEX_HTML = """<!doctype html>
       }
       if (event.type === "browser_created") {
         return `${event.source_name || event.source_id} browser window is ready`;
+      }
+      if (event.type === "browser_prepared") {
+        return `${event.source_name || event.source_id} login context is ready`;
       }
       if (event.type === "browser_closed") {
         return `${event.source_name || event.source_id} browser session was released`;
@@ -441,6 +444,7 @@ INDEX_HTML = """<!doctype html>
     function eventStatus(event) {
       if (event.ok === false || event.status === "failed") return "failed";
       if (event.type === "browser_created") return "ready";
+      if (event.type === "browser_prepared") return "prepared";
       if (event.type === "browser_closed") return "released";
       if (event.type === "job_started" || event.type === "research_started") return "running";
       if (event.type === "job_finished" || event.type === "research_finished") return "done";
@@ -463,31 +467,42 @@ INDEX_HTML = """<!doctype html>
 
     function renderBrowsers() {
       browserGrid.innerHTML = "";
-      if (!browsers.size) {
+      if (!browserSlots.size) {
         const empty = document.createElement("div");
         empty.className = "empty";
         empty.textContent = "Browser windows will appear here";
         browserGrid.appendChild(empty);
         return;
       }
-      for (const browser of browsers.values()) {
+      for (const browser of browserSlots.values()) {
         const card = document.createElement("article");
         card.className = "browser-card";
         const toolbar = document.createElement("div");
         toolbar.className = "browser-toolbar";
         const title = document.createElement("div");
         title.className = "browser-title";
-        title.textContent = `${browser.source_name || browser.source_id} · ${browser.session_id}`;
-        const link = document.createElement("a");
-        link.href = browser.inspect_url;
-        link.target = "_blank";
-        link.rel = "noreferrer";
-        link.textContent = "Open";
-        toolbar.append(title, link);
-        const frame = document.createElement("iframe");
-        frame.src = browser.inspect_url;
-        frame.title = title.textContent;
-        card.append(toolbar, frame);
+        title.textContent = `${browser.source_name || browser.source_id} · ${browser.status || "Preparing"}`;
+        toolbar.appendChild(title);
+        if (browser.inspect_url) {
+          const link = document.createElement("a");
+          link.href = browser.inspect_url;
+          link.target = "_blank";
+          link.rel = "noreferrer";
+          link.textContent = "Open";
+          toolbar.appendChild(link);
+        }
+        card.appendChild(toolbar);
+        if (browser.inspect_url) {
+          const frame = document.createElement("iframe");
+          frame.src = browser.inspect_url;
+          frame.title = title.textContent;
+          card.appendChild(frame);
+        } else {
+          const placeholder = document.createElement("div");
+          placeholder.className = "empty";
+          placeholder.textContent = browser.status || "Preparing browser";
+          card.appendChild(placeholder);
+        }
         browserGrid.appendChild(card);
       }
     }
@@ -556,7 +571,7 @@ INDEX_HTML = """<!doctype html>
 
     function resetRun(runId) {
       if (events) events.close();
-      browsers.clear();
+      browserSlots.clear();
       eventList.innerHTML = "";
       visibleEventCount = 0;
       eventCount.textContent = "0 events";
@@ -569,8 +584,35 @@ INDEX_HTML = """<!doctype html>
       events.onmessage = (message) => {
         const data = JSON.parse(message.data);
         appendLog(data);
+        if (data.type === "research_started" && Array.isArray(data.jobs)) {
+          browserSlots.clear();
+          for (const job of data.jobs) {
+            browserSlots.set(job.source_id || job.rank, {
+              ...job,
+              status: "Preparing",
+            });
+          }
+          renderBrowsers();
+        }
+        if (data.type === "browser_prepared") {
+          const key = data.source_id || data.session_id;
+          const existing = browserSlots.get(key) || {};
+          browserSlots.set(key, {
+            ...existing,
+            ...data,
+            inspect_url: existing.inspect_url,
+            status: "Login ready",
+          });
+          renderBrowsers();
+        }
         if (data.type === "browser_created" && data.inspect_url) {
-          browsers.set(data.session_id || data.source_id, data);
+          const key = data.source_id || data.session_id;
+          const existing = browserSlots.get(key) || {};
+          browserSlots.set(key, {
+            ...existing,
+            ...data,
+            status: "Ready",
+          });
           renderBrowsers();
         }
         if (data.type === "research_finished") {
@@ -942,7 +984,7 @@ class ResearchObserver:
     def _record_event(self, run: ObserverRun, event: dict[str, Any]) -> None:
         with self._lock:
             run.events.append(event)
-            if event.get("type") == "browser_created":
+            if event.get("type") in {"browser_created", "browser_prepared"}:
                 session_id = event.get("session_id")
                 if isinstance(session_id, str) and session_id:
                     inspect_url = event.get("inspect_url")

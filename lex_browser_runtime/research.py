@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import queue
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -13,6 +15,7 @@ from urllib.parse import quote
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from lex_browser_runtime.auth_contexts import AuthContextEntry, load_auth_context_store
 from lex_browser_runtime.browser.lexmount import LexmountBrowserAdmin
 from lex_browser_runtime.browser.models import BrowserConfigError, BrowserRuntimeError
 from lex_browser_runtime.config import get_default_research_concurrency
@@ -80,6 +83,8 @@ class ResearchJobResult(BaseModel):
     duration_ms: float
     session_id: str | None = None
     inspect_url: str | None = None
+    auth_context_id: str | None = None
+    auth_context_mode: str | None = None
     final_url: str | None = None
     title: str | None = None
     status: int | None = None
@@ -109,6 +114,18 @@ class ResearchRunSummary(BaseModel):
     concurrency: int
     jobs: list[ResearchJob]
     results: list[ResearchJobResult]
+
+
+@dataclass(slots=True)
+class AllocatedResearchSession:
+    """A Lexmount session already reserved for one research job."""
+
+    admin: LexmountBrowserAdmin
+    session_id: str | None
+    inspect_url: str | None
+    connect_url: str | None
+    auth_context: AuthContextEntry | None = None
+    browser_created_emitted: bool = False
 
 
 FOOD_SOURCES: tuple[ResearchSource, ...] = (
@@ -369,18 +386,33 @@ def _run_research_job(
     max_chars: int,
     browser_mode: str,
     keep_sessions: bool,
+    session_create_timeout_sec: float,
+    auth_context: AuthContextEntry | None = None,
+    allocated_session: AllocatedResearchSession | None = None,
     record_event: Callable[..., None] | None = None,
 ) -> ResearchJobResult:
     started_at = time.time()
     session_id: str | None = None
     inspect_url: str | None = None
-    admin = admin_factory()
+    admin: LexmountBrowserAdmin | None = None
     try:
-        session_result = admin.create_session(browser_mode=browser_mode)
-        session = session_result.session
-        session_id = session.session_id
-        inspect_url = session.inspect_url or session.inspect_url_dbg
-        if record_event is not None:
+        if allocated_session is None:
+            allocated = _allocate_research_session(
+                job=job,
+                auth_context=auth_context,
+                admin_factory=admin_factory,
+                browser_mode=browser_mode,
+                session_create_timeout_sec=session_create_timeout_sec,
+                record_event=record_event,
+            )
+            if isinstance(allocated, ResearchJobResult):
+                return allocated
+            allocated_session = allocated
+        admin = allocated_session.admin
+        session_id = allocated_session.session_id
+        inspect_url = allocated_session.inspect_url
+        auth_context = allocated_session.auth_context
+        if not allocated_session.browser_created_emitted and record_event is not None:
             record_event(
                 "browser_created",
                 source_id=job.source_id,
@@ -388,13 +420,20 @@ def _run_research_job(
                 url=job.url,
                 session_id=session_id,
                 inspect_url=inspect_url,
+                auth_context_id=(
+                    auth_context.context_id if auth_context is not None else None
+                ),
+                auth_context_mode=(
+                    auth_context.context_mode if auth_context is not None else None
+                ),
             )
-        if not session.connect_url:
+            allocated_session.browser_created_emitted = True
+        if not allocated_session.connect_url:
             raise BrowserRuntimeError(
                 "Created research session did not expose connect_url"
             )
         extracted = _extract_page_data(
-            connect_url=session.connect_url,
+            connect_url=allocated_session.connect_url,
             url=job.url,
             timeout_ms=timeout_ms,
             wait_after_ms=wait_after_ms,
@@ -408,6 +447,12 @@ def _run_research_job(
             duration_ms=(time.time() - started_at) * 1000,
             session_id=session_id,
             inspect_url=inspect_url,
+            auth_context_id=(
+                auth_context.context_id if auth_context is not None else None
+            ),
+            auth_context_mode=(
+                auth_context.context_mode if auth_context is not None else None
+            ),
             final_url=extracted.get("final_url"),
             title=extracted.get("title"),
             status=extracted.get("status"),
@@ -437,11 +482,17 @@ def _run_research_job(
             duration_ms=(time.time() - started_at) * 1000,
             session_id=session_id,
             inspect_url=inspect_url,
+            auth_context_id=(
+                auth_context.context_id if auth_context is not None else None
+            ),
+            auth_context_mode=(
+                auth_context.context_mode if auth_context is not None else None
+            ),
             error=exc.__class__.__name__,
             message=str(exc),
         )
     finally:
-        if session_id and not keep_sessions:
+        if session_id and admin is not None and not keep_sessions:
             try:
                 admin.close_session(session_id)
                 if record_event is not None:
@@ -459,6 +510,172 @@ def _run_research_job(
                 pass
 
 
+def _session_failure_result(
+    *,
+    job: ResearchJob,
+    auth_context: AuthContextEntry | None,
+    started_at: float,
+    error: str,
+    message: str,
+) -> ResearchJobResult:
+    return ResearchJobResult(
+        source_id=job.source_id,
+        source_name=job.source_name,
+        url=job.url,
+        ok=False,
+        duration_ms=(time.time() - started_at) * 1000,
+        auth_context_id=(
+            auth_context.context_id if auth_context is not None else None
+        ),
+        auth_context_mode=(
+            auth_context.context_mode if auth_context is not None else None
+        ),
+        error=error,
+        message=message,
+    )
+
+
+def _allocate_research_session(
+    *,
+    job: ResearchJob,
+    auth_context: AuthContextEntry | None,
+    admin_factory: Callable[[], LexmountBrowserAdmin],
+    browser_mode: str,
+    session_create_timeout_sec: float,
+    record_event: Callable[..., None] | None = None,
+    browser_ready_event_type: str = "browser_created",
+) -> AllocatedResearchSession | ResearchJobResult:
+    started_at = time.time()
+    admin = admin_factory()
+    session_id: str | None = None
+    inspect_url: str | None = None
+    auth_context_id = auth_context.context_id if auth_context is not None else None
+    auth_context_mode = (
+        auth_context.context_mode if auth_context is not None else None
+    )
+    try:
+        if record_event is not None:
+            record_event(
+                "session_create_started",
+                source_id=job.source_id,
+                source_name=job.source_name,
+                url=job.url,
+                auth_context_id=auth_context_id,
+                auth_context_mode=auth_context_mode,
+            )
+        session_kwargs: dict[str, Any] = {"browser_mode": browser_mode}
+        if auth_context is not None:
+            session_kwargs["context_id"] = auth_context.context_id
+            session_kwargs["context_mode"] = auth_context.context_mode
+        session_result = _create_session_with_timeout(
+            admin,
+            timeout_sec=session_create_timeout_sec,
+            **session_kwargs,
+        )
+        session = session_result.session
+        session_id = session.session_id
+        inspect_url = session.inspect_url or session.inspect_url_dbg
+        browser_created_emitted = False
+        if record_event is not None:
+            record_event(
+                browser_ready_event_type,
+                source_id=job.source_id,
+                source_name=job.source_name,
+                url=job.url,
+                session_id=session_id,
+                inspect_url=inspect_url,
+                auth_context_id=auth_context_id,
+                auth_context_mode=auth_context_mode,
+            )
+            browser_created_emitted = browser_ready_event_type == "browser_created"
+        return AllocatedResearchSession(
+            admin=admin,
+            session_id=session_id,
+            inspect_url=inspect_url,
+            connect_url=session.connect_url,
+            auth_context=auth_context,
+            browser_created_emitted=browser_created_emitted,
+        )
+    except Exception as exc:
+        message = f"Failed to create Lexmount session before research: {exc}"
+        if record_event is not None:
+            record_event(
+                "session_create_failed",
+                source_id=job.source_id,
+                source_name=job.source_name,
+                url=job.url,
+                duration_ms=(time.time() - started_at) * 1000,
+                session_id=session_id,
+                inspect_url=inspect_url,
+                auth_context_id=auth_context_id,
+                auth_context_mode=auth_context_mode,
+                error=exc.__class__.__name__,
+                message=message,
+            )
+        return _session_failure_result(
+            job=job,
+            auth_context=auth_context,
+            started_at=started_at,
+            error=exc.__class__.__name__,
+            message=message,
+        )
+
+
+def _create_session_with_timeout(
+    admin: LexmountBrowserAdmin,
+    *,
+    timeout_sec: float,
+    **session_kwargs: Any,
+) -> Any:
+    result_queue: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
+
+    def create_session() -> None:
+        try:
+            result_queue.put((True, admin.create_session(**session_kwargs)))
+        except BaseException as exc:
+            result_queue.put((False, exc))
+
+    thread = threading.Thread(target=create_session, daemon=True)
+    thread.start()
+    thread.join(timeout_sec)
+    if thread.is_alive():
+        _close_session_created_after_timeout(admin, thread, result_queue)
+        raise BrowserRuntimeError(
+            f"Timed out creating Lexmount session after {timeout_sec:.1f}s"
+        )
+    ok, value = result_queue.get()
+    if ok:
+        return value
+    raise value
+
+
+def _close_session_created_after_timeout(
+    admin: LexmountBrowserAdmin,
+    thread: threading.Thread,
+    result_queue: queue.Queue[tuple[bool, Any]],
+) -> None:
+    """Release a session if create_session finishes after the caller timed out."""
+
+    def cleanup() -> None:
+        thread.join()
+        try:
+            ok, value = result_queue.get_nowait()
+        except queue.Empty:
+            return
+        if not ok:
+            return
+        session = getattr(value, "session", None)
+        session_id = getattr(session, "session_id", None)
+        if not session_id:
+            return
+        try:
+            admin.close_session(str(session_id))
+        except Exception:
+            return
+
+    threading.Thread(target=cleanup, daemon=True).start()
+
+
 def run_research(
     *,
     query: str,
@@ -473,6 +690,10 @@ def run_research(
     max_chars: int = 6000,
     browser_mode: str = "normal",
     keep_sessions: bool = False,
+    session_create_timeout_sec: float = 60.0,
+    auth_contexts_file: str | Path | None = None,
+    use_auth_contexts: bool = True,
+    preallocate_auth_context_sessions: bool = True,
     admin_factory: Callable[[], LexmountBrowserAdmin] = LexmountBrowserAdmin,
     job_runner: Callable[[ResearchJob], ResearchJobResult] | None = None,
     on_event: ResearchEventSink | None = None,
@@ -488,12 +709,19 @@ def run_research(
         raise BrowserConfigError("timeout_ms must be greater than 0")
     if max_chars <= 0:
         raise BrowserConfigError("max_chars must be greater than 0")
+    if session_create_timeout_sec <= 0:
+        raise BrowserConfigError("session_create_timeout_sec must be greater than 0")
 
     route = route_research(
         query=query,
         preset=preset,
         sites=sites,
         max_sites=max_sites,
+    )
+    auth_context_store = (
+        load_auth_context_store(auth_contexts_file)
+        if use_auth_contexts
+        else None
     )
     resolved_run_id = run_id or research_run_id()
     root = Path(output_dir) if output_dir else Path.cwd() / "lexmount-research-runs"
@@ -524,7 +752,60 @@ def run_research(
         preset=route.preset,
         job_count=len(route.jobs),
         concurrency=resolved_concurrency,
+        jobs=[
+            {
+                "rank": job.rank,
+                "source_id": job.source_id,
+                "source_name": job.source_name,
+                "url": job.url,
+            }
+            for job in route.jobs
+        ],
     )
+
+    auth_context_by_rank = {
+        job.rank: (
+            auth_context_store.get(job.source_id)
+            if auth_context_store is not None
+            else None
+        )
+        for job in route.jobs
+    }
+    results_by_rank: dict[int, ResearchJobResult] = {}
+    allocated_sessions_by_rank: dict[int, AllocatedResearchSession] = {}
+
+    if preallocate_auth_context_sessions and job_runner is None:
+        for job in route.jobs:
+            auth_context = auth_context_by_rank[job.rank]
+            if auth_context is None:
+                continue
+            allocated = _allocate_research_session(
+                job=job,
+                auth_context=auth_context,
+                admin_factory=admin_factory,
+                browser_mode=browser_mode,
+                session_create_timeout_sec=session_create_timeout_sec,
+                record_event=record_event,
+                browser_ready_event_type="browser_prepared",
+            )
+            if isinstance(allocated, ResearchJobResult):
+                results_by_rank[job.rank] = allocated
+                record_event(
+                    "job_finished",
+                    source_id=job.source_id,
+                    source_name=job.source_name,
+                    ok=allocated.ok,
+                    duration_ms=allocated.duration_ms,
+                    error=allocated.error,
+                    message=allocated.message,
+                )
+                with lock:
+                    _append_jsonl(
+                        sources_path,
+                        allocated.model_dump(mode="json"),
+                    )
+            else:
+                allocated_sessions_by_rank[job.rank] = allocated
 
     def execute(job: ResearchJob) -> ResearchJobResult:
         record_event(
@@ -544,6 +825,9 @@ def run_research(
                 max_chars=max_chars,
                 browser_mode=browser_mode,
                 keep_sessions=keep_sessions,
+                session_create_timeout_sec=session_create_timeout_sec,
+                auth_context=auth_context_by_rank[job.rank],
+                allocated_session=allocated_sessions_by_rank.get(job.rank),
                 record_event=record_event,
             )
         record_event(
@@ -559,10 +843,18 @@ def run_research(
             _append_jsonl(sources_path, result.model_dump(mode="json"))
         return result
 
+    jobs_to_run = [job for job in route.jobs if job.rank not in results_by_rank]
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=resolved_concurrency,
     ) as executor:
-        results = list(executor.map(execute, route.jobs))
+        for job, result in zip(
+            jobs_to_run,
+            executor.map(execute, jobs_to_run),
+            strict=True,
+        ):
+            results_by_rank[job.rank] = result
+
+    results = [results_by_rank[job.rank] for job in route.jobs]
 
     success_count = sum(1 for result in results if result.ok)
     failure_count = len(results) - success_count
