@@ -297,6 +297,36 @@ def test_observer_http_accepts_external_run_events() -> None:
         thread.join(timeout=2)
 
 
+def test_observer_tracks_prepared_browser_without_requiring_display_event() -> None:
+    observer = ResearchObserver()
+    observer.create_observed_run(run_id="codex-run-prepared", query="query")
+
+    result = observer.record_external_event(
+        "codex-run-prepared",
+        {
+            "type": "browser_prepared",
+            "source_id": "xiaohongshu",
+            "source_name": "Xiaohongshu",
+            "session_id": "session_prepared",
+            "inspect_url": "https://browser.lexmount.test/inspect/session_prepared",
+        },
+    )
+
+    state = observer.get_run("codex-run-prepared")
+
+    assert result["status"] == "running"
+    assert state["active_sessions"] == [
+        {
+            "session_id": "session_prepared",
+            "inspect_url": "https://browser.lexmount.test/inspect/session_prepared",
+        }
+    ]
+    assert [event["type"] for event in state["events"]] == [
+        "observer_run_created",
+        "browser_prepared",
+    ]
+
+
 def test_observer_http_finishes_external_run_with_summary_answer() -> None:
     observer = ResearchObserver()
     server = create_observer_server(("127.0.0.1", 0), observer=observer)
@@ -393,6 +423,11 @@ def test_observer_page_prioritizes_large_five_column_browser_grid() -> None:
         assert 'id="eventList"' in html
         assert 'id="answerPanel"' in html
         assert "renderAnswer" in html
+        assert "browserSlots" in html
+        assert 'data.type === "browser_prepared"' in html
+        assert 'data.type === "research_started" && Array.isArray(data.jobs)' in html
+        assert 'status: "Preparing"' in html
+        assert 'status: "Login ready"' in html
         assert 'id="researchForm"' in html
         assert 'id="query"' in html
         assert 'id="query" name="query" value="" autocomplete="off"' in html

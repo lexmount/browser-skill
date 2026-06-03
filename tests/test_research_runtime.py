@@ -302,6 +302,66 @@ def test_cli_research_run_uses_observer_url_env(
     assert json.loads(capsys.readouterr().out)["run_id"] == "codex-env-run"
 
 
+def test_cli_research_run_forwards_auth_contexts_file(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    auth_contexts_file = tmp_path / "auth-contexts.json"
+    auth_contexts_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "contexts": {
+                    "xiaohongshu": {
+                        "context_id": "ctx_xhs",
+                        "context_mode": "read_only",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeSummary:
+        ok = True
+
+        def model_dump(self, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "command": "research.run",
+                "auth_contexts_file": str(captured["auth_contexts_file"]),
+                "ok": True,
+            }
+
+    def fake_run_research(**kwargs: object) -> FakeSummary:
+        captured.update(kwargs)
+        return FakeSummary()
+
+    monkeypatch.setattr("lex_browser_runtime.cli.run_research", fake_run_research)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main(
+            [
+                "research",
+                "run",
+                "--query",
+                "最好吃的红烧肉",
+                "--sites",
+                "xiaohongshu",
+                "--auth-contexts-file",
+                str(auth_contexts_file),
+            ]
+        )
+
+    assert exc_info.value.code == 0
+    assert captured["auth_contexts_file"] == str(auth_contexts_file)
+    assert json.loads(capsys.readouterr().out)["auth_contexts_file"] == str(
+        auth_contexts_file
+    )
+
+
 def test_run_research_uses_concurrency_and_writes_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -410,12 +470,13 @@ def test_run_research_emits_live_browser_created_event(
     assert event_types == [
         "research_started",
         "job_started",
+        "session_create_started",
         "browser_created",
         "browser_closed",
         "job_finished",
         "research_finished",
     ]
-    browser_event = events[2]
+    browser_event = events[3]
     assert browser_event["source_id"] == "baidu"
     assert browser_event["source_name"] == "Baidu web"
     assert browser_event["session_id"] == "session_123"
@@ -423,7 +484,355 @@ def test_run_research_emits_live_browser_created_event(
         browser_event["inspect_url"]
         == "https://browser.lexmount.test/inspect/session_123"
     )
-    assert events[3]["session_id"] == "session_123"
+    assert events[4]["session_id"] == "session_123"
+
+
+def test_run_research_uses_saved_auth_context_for_matching_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth_contexts_file = tmp_path / "auth-contexts.json"
+    auth_contexts_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "contexts": {
+                    "xiaohongshu": {
+                        "context_id": "ctx_xhs",
+                        "context_mode": "read_only",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    create_calls: list[dict[str, object]] = []
+    close_calls: list[str] = []
+
+    class FakeAdmin:
+        def create_session(
+            self,
+            *,
+            browser_mode: str,
+            context_id: str | None = None,
+            context_mode: str = "read_write",
+        ) -> SimpleNamespace:
+            create_calls.append(
+                {
+                    "browser_mode": browser_mode,
+                    "context_id": context_id,
+                    "context_mode": context_mode,
+                }
+            )
+            return SimpleNamespace(
+                session=SimpleNamespace(
+                    session_id="session_xhs",
+                    inspect_url="https://browser.lexmount.test/inspect/session_xhs",
+                    inspect_url_dbg=None,
+                    connect_url="wss://cdp.lexmount.test/session_xhs",
+                )
+            )
+
+        def close_session(self, session_id: str) -> None:
+            close_calls.append(session_id)
+
+    def fake_extract_page_data(**kwargs: object) -> dict[str, object]:
+        assert kwargs["connect_url"] == "wss://cdp.lexmount.test/session_xhs"
+        return {
+            "final_url": kwargs["url"],
+            "title": "Xiaohongshu result",
+            "text": "visible logged-in evidence",
+            "headings": [],
+            "links": [],
+            "candidates": [],
+            "status": 200,
+        }
+
+    monkeypatch.setattr(
+        "lex_browser_runtime.research._extract_page_data",
+        fake_extract_page_data,
+    )
+
+    summary = run_research(
+        query="最好吃的红烧肉",
+        sites="xiaohongshu",
+        max_sites=1,
+        concurrency=1,
+        output_dir=tmp_path,
+        run_id="auth-context",
+        admin_factory=FakeAdmin,
+        auth_contexts_file=auth_contexts_file,
+    )
+
+    assert summary.ok is True
+    assert create_calls == [
+        {
+            "browser_mode": "normal",
+            "context_id": "ctx_xhs",
+            "context_mode": "read_only",
+        },
+    ]
+    assert close_calls == ["session_xhs"]
+    assert summary.results[0].auth_context_id == "ctx_xhs"
+    assert summary.results[0].auth_context_mode == "read_only"
+
+
+def test_run_research_preallocates_auth_context_sessions_before_public_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth_contexts_file = tmp_path / "auth-contexts.json"
+    auth_contexts_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "contexts": {
+                    "xiaohongshu": {
+                        "context_id": "ctx_xhs",
+                        "context_mode": "read_write",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    create_calls: list[str] = []
+    events: list[dict[str, object]] = []
+
+    class FakeAdmin:
+        def create_session(
+            self,
+            *,
+            browser_mode: str,
+            context_id: str | None = None,
+            context_mode: str = "read_write",
+        ) -> SimpleNamespace:
+            source = "xiaohongshu" if context_id == "ctx_xhs" else "public"
+            create_calls.append(source)
+            return SimpleNamespace(
+                session=SimpleNamespace(
+                    session_id=f"session_{source}_{len(create_calls)}",
+                    inspect_url=f"https://browser.lexmount.test/{source}",
+                    inspect_url_dbg=None,
+                    connect_url=f"wss://cdp.lexmount.test/{source}",
+                )
+            )
+
+        def close_session(self, session_id: str) -> None:
+            return None
+
+    def fake_extract_page_data(**kwargs: object) -> dict[str, object]:
+        return {
+            "final_url": kwargs["url"],
+            "title": "result",
+            "text": "visible evidence",
+            "headings": [],
+            "links": [],
+            "candidates": [],
+            "status": 200,
+        }
+
+    monkeypatch.setattr(
+        "lex_browser_runtime.research._extract_page_data",
+        fake_extract_page_data,
+    )
+
+    summary = run_research(
+        query="最好吃的红烧肉",
+        sites="baidu,xiaohongshu,bing",
+        concurrency=3,
+        output_dir=tmp_path,
+        run_id="auth-first",
+        admin_factory=FakeAdmin,
+        auth_contexts_file=auth_contexts_file,
+        on_event=events.append,
+    )
+
+    assert summary.ok is True
+    assert create_calls[0] == "xiaohongshu"
+    assert create_calls.count("xiaohongshu") == 1
+    assert create_calls.count("public") == 2
+    assert events[0]["type"] == "research_started"
+    assert events[0]["jobs"] == [
+        {
+            "rank": 1,
+            "source_id": "baidu",
+            "source_name": "Baidu web",
+            "url": summary.jobs[0].url,
+        },
+        {
+            "rank": 2,
+            "source_id": "xiaohongshu",
+            "source_name": "Xiaohongshu",
+            "url": summary.jobs[1].url,
+        },
+        {
+            "rank": 3,
+            "source_id": "bing",
+            "source_name": "Bing web",
+            "url": summary.jobs[2].url,
+        },
+    ]
+    prepared_events = [
+        event for event in events if event["type"] == "browser_prepared"
+    ]
+    assert len(prepared_events) == 1
+    assert prepared_events[0]["source_id"] == "xiaohongshu"
+    created_events = [
+        event
+        for event in events
+        if event["type"] == "browser_created"
+        and event.get("source_id") == "xiaohongshu"
+    ]
+    assert len(created_events) == 1
+    assert created_events[0]["session_id"] == prepared_events[0]["session_id"]
+    assert events.index(prepared_events[0]) < events.index(created_events[0])
+
+
+def test_run_research_records_auth_context_session_allocation_failure(
+    tmp_path: Path,
+) -> None:
+    auth_contexts_file = tmp_path / "auth-contexts.json"
+    auth_contexts_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "contexts": {
+                    "zhihu": {
+                        "context_id": "ctx_zhihu",
+                        "context_mode": "read_write",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    events: list[dict[str, object]] = []
+    create_calls: list[dict[str, object]] = []
+
+    class FakeAdmin:
+        def create_session(
+            self,
+            *,
+            browser_mode: str,
+            context_id: str | None = None,
+            context_mode: str = "read_write",
+        ) -> SimpleNamespace:
+            create_calls.append(
+                {
+                    "browser_mode": browser_mode,
+                    "context_id": context_id,
+                    "context_mode": context_mode,
+                }
+            )
+            raise RuntimeError("context session did not become ready")
+
+        def close_session(self, session_id: str) -> None:
+            raise AssertionError(f"unexpected close for {session_id}")
+
+    summary = run_research(
+        query="最好吃的红烧肉",
+        sites="zhihu",
+        max_sites=1,
+        concurrency=1,
+        output_dir=tmp_path,
+        run_id="auth-session-allocation-failure",
+        admin_factory=FakeAdmin,
+        auth_contexts_file=auth_contexts_file,
+        on_event=events.append,
+    )
+
+    assert summary.ok is False
+    assert summary.success_count == 0
+    assert summary.failure_count == 1
+    assert create_calls == [
+        {
+            "browser_mode": "normal",
+            "context_id": "ctx_zhihu",
+            "context_mode": "read_write",
+        }
+    ]
+    assert summary.results[0].source_id == "zhihu"
+    assert summary.results[0].auth_context_id == "ctx_zhihu"
+    assert summary.results[0].error == "RuntimeError"
+    assert summary.results[0].message == (
+        "Failed to create Lexmount session before research: "
+        "context session did not become ready"
+    )
+    event_types = [event["type"] for event in events]
+    assert event_types == [
+        "research_started",
+        "session_create_started",
+        "session_create_failed",
+        "job_finished",
+        "research_finished",
+    ]
+    assert (tmp_path / "auth-session-allocation-failure" / "summary.json").exists()
+    source_lines = (
+        tmp_path / "auth-session-allocation-failure" / "sources.jsonl"
+    ).read_text(encoding="utf-8").splitlines()
+    assert len(source_lines) == 1
+    assert json.loads(source_lines[0])["source_id"] == "zhihu"
+
+
+def test_run_research_times_out_slow_auth_context_session_allocation(
+    tmp_path: Path,
+) -> None:
+    auth_contexts_file = tmp_path / "auth-contexts.json"
+    auth_contexts_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "contexts": {
+                    "xiaohongshu": {
+                        "context_id": "ctx_xhs",
+                        "context_mode": "read_write",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    close_calls: list[str] = []
+
+    class FakeAdmin:
+        def create_session(
+            self,
+            *,
+            browser_mode: str,
+            context_id: str | None = None,
+            context_mode: str = "read_write",
+        ) -> SimpleNamespace:
+            time.sleep(0.3)
+            return SimpleNamespace(session=SimpleNamespace(session_id="late_session"))
+
+        def close_session(self, session_id: str) -> None:
+            close_calls.append(session_id)
+
+    summary = run_research(
+        query="最好吃的红烧肉",
+        sites="xiaohongshu",
+        max_sites=1,
+        concurrency=1,
+        output_dir=tmp_path,
+        run_id="auth-session-allocation-timeout",
+        admin_factory=FakeAdmin,
+        auth_contexts_file=auth_contexts_file,
+        session_create_timeout_sec=0.1,
+    )
+
+    assert summary.ok is False
+    assert summary.results[0].source_id == "xiaohongshu"
+    assert summary.results[0].error == "BrowserRuntimeError"
+    assert summary.results[0].message == (
+        "Failed to create Lexmount session before research: "
+        "Timed out creating Lexmount session after 0.1s"
+    )
+    deadline = time.time() + 1.0
+    while not close_calls and time.time() < deadline:
+        time.sleep(0.01)
+    assert close_calls == ["late_session"]
+    assert (tmp_path / "auth-session-allocation-timeout" / "summary.json").exists()
 
 
 def test_run_research_emits_failure_message_in_live_events(tmp_path: Path) -> None:

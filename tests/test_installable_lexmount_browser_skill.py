@@ -44,6 +44,15 @@ def test_base_skill_documents_observer_research_workflow() -> None:
     assert "lexmount-concurrency-browser" not in skill
 
 
+def test_base_skill_exposes_prelogin_auth_context_workflow() -> None:
+    skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+
+    assert (SKILL_DIR / "scripts" / "prelogin-auth-contexts").exists()
+    assert "prelogin-auth-contexts" in skill
+    assert "auth-contexts.json" in skill
+    assert "read_write" in skill
+
+
 def test_skill_runtime_requirement_pins_current_release() -> None:
     package = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
     requirement = RUNTIME_REQUIREMENT.read_text(encoding="utf-8").strip()
@@ -63,6 +72,7 @@ def test_npm_package_exposes_runtime_backed_skill_installer() -> None:
     }
     assert "skills/lexmount-browser/SKILL.md" in package["files"]
     assert "skills/lexmount-browser/runtime-requirement.txt" in package["files"]
+    assert "skills/lexmount-browser/scripts/prelogin-auth-contexts" in package["files"]
     assert "tools/install-skill.mjs" in package["files"]
 
 
@@ -126,6 +136,7 @@ def test_install_script_copies_codex_and_claude_skill_with_env(tmp_path: Path) -
     for installed in (codex_skill, claude_skill):
         assert (installed / "SKILL.md").exists()
         assert (installed / "scripts" / "lexmount-browser").exists()
+        assert (installed / "scripts" / "prelogin-auth-contexts").exists()
         assert 'LEXMOUNT_API_KEY="key"' in (installed / ".env").read_text(
             encoding="utf-8"
         )

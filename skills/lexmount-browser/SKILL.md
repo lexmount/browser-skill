@@ -95,6 +95,17 @@ LEX_BROWSER_OBSERVER_URL=http://127.0.0.1:8765 \
 Use plain `research run` without observer only when the user explicitly asks for
 no UI, only artifacts, or a non-interactive run.
 
+One-time prelogin for login-walled research sources:
+
+```bash
+"$SKILL_DIR/scripts/prelogin-auth-contexts" --sources xiaohongshu,zhihu,weibo,douyin
+```
+
+The script opens Lexmount browser windows for manual login and saves source
+contexts to `~/.lex-browser-runtime/auth-contexts.json`. Future `research run`
+commands load that file automatically and reuse matching source contexts in
+`read_write` mode so normal Codex research prompts do not need extra flags.
+
 ## Preferred Workflow
 
 1. Use this skill before writing raw Lexmount SDK snippets, curl calls, or
@@ -146,6 +157,18 @@ Research artifacts:
 - `events.jsonl`: start/finish timeline for each source job.
 - `sources.jsonl`: one compact evidence record per source.
 - `summary.json`: aggregate status, output paths, jobs, and extracted results.
+
+Auth contexts:
+
+- Run `"$SKILL_DIR/scripts/prelogin-auth-contexts"` once when sources such as
+  Xiaohongshu, Zhihu, Weibo, or Douyin block useful results behind login.
+- The saved file is local user state at
+  `~/.lex-browser-runtime/auth-contexts.json` by default.
+- `research run` automatically uses matching saved contexts by source id.
+- Use `--auth-contexts-file <path>` only to override the default file, or
+  `--no-auth-contexts` to force anonymous research.
+- Saved contexts are used with `read_write` mode by default because the current
+  Lexmount session API rejects `read_only` context reuse.
 
 ## Observer Research Workflow
 
@@ -216,6 +239,7 @@ Research:
 
 ```bash
 "$SKILL_DIR/scripts/lexmount-browser" observer serve --host 127.0.0.1 --port 8765
+"$SKILL_DIR/scripts/prelogin-auth-contexts" --sources xiaohongshu,zhihu,weibo,douyin
 "$SKILL_DIR/scripts/lexmount-browser" research route --query "最好吃的红烧肉" --preset food
 "$SKILL_DIR/scripts/lexmount-browser" research run --query "最好吃的红烧肉" --preset food --max-sites 10 --concurrency 5
 "$SKILL_DIR/scripts/lexmount-browser" research run --query "best browser automation news" --preset web --max-sites 2

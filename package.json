@@ -43,6 +43,7 @@
     "skills/lexmount-browser/examples/basic-open.json",
     "skills/lexmount-browser/scripts/bootstrap_runtime.py",
     "skills/lexmount-browser/scripts/lexmount-browser",
+    "skills/lexmount-browser/scripts/prelogin-auth-contexts",
     "tools/install-skill.mjs",
     "tools/install-skill-win.mjs"
   ]

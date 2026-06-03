@@ -412,6 +412,12 @@ def cmd_research_run(args: argparse.Namespace) -> None:
             "max_chars": args.max_chars,
             "browser_mode": args.browser_mode,
             "keep_sessions": args.keep_sessions,
+            "session_create_timeout_sec": args.session_create_timeout_sec,
+            "auth_contexts_file": args.auth_contexts_file,
+            "use_auth_contexts": not args.no_auth_contexts,
+            "preallocate_auth_context_sessions": (
+                not args.no_auth_context_session_preallocation
+            ),
         }
         if observer_url:
             with ObserverEventPublisher(
@@ -689,6 +695,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--keep-sessions",
         action="store_true",
         help="Keep created Lexmount sessions open for debugging",
+    )
+    research_run.add_argument(
+        "--session-create-timeout-sec",
+        type=float,
+        default=60.0,
+        help="Maximum seconds to wait for each Lexmount session creation",
+    )
+    research_run.add_argument(
+        "--auth-contexts-file",
+        help=(
+            "Override the local source auth context mapping file. "
+            "Defaults to ~/.lex-browser-runtime/auth-contexts.json."
+        ),
+    )
+    research_run.add_argument(
+        "--no-auth-contexts",
+        action="store_true",
+        help="Disable automatic use of saved source auth contexts",
+    )
+    research_run.add_argument(
+        "--no-auth-context-session-preallocation",
+        "--no-auth-context-preflight",
+        dest="no_auth_context_session_preallocation",
+        action="store_true",
+        help="Skip reserving saved auth-context sessions before other research jobs",
     )
     research_run.set_defaults(func=cmd_research_run)
 

@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""Create reusable Lexmount auth contexts for login-walled research sources."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+WRAPPER = SCRIPT_DIR / "lexmount-browser"
+AUTH_CONTEXTS_ENV = "LEX_BROWSER_AUTH_CONTEXTS_FILE"
+DEFAULT_CONTEXT_MODE = "read_write"
+DEFAULT_SOURCES = {
+    "xiaohongshu": {
+        "login_url": "https://www.xiaohongshu.com",
+        "probe_url": (
+            "https://www.xiaohongshu.com/search_result?"
+            "keyword=%E7%BA%A2%E7%83%A7%E8%82%89"
+        ),
+        "login_markers": ["登录后查看搜索结果", "新用户可直接登录"],
+    },
+    "zhihu": {
+        "login_url": "https://www.zhihu.com/signin",
+        "probe_url": (
+            "https://www.zhihu.com/search?"
+            "type=content&q=%E7%BA%A2%E7%83%A7%E8%82%89"
+        ),
+        "login_markers": ["登录知乎", "立即登录/注册"],
+    },
+    "weibo": {
+        "login_url": "https://passport.weibo.com/sso/signin",
+        "probe_url": "https://s.weibo.com/weibo?q=%E7%BA%A2%E7%83%A7%E8%82%89",
+        "login_markers": ["扫描二维码登录", "验证码登录"],
+    },
+    "douyin": {
+        "login_url": "https://www.douyin.com",
+        "probe_url": "https://www.douyin.com/search/%E7%BA%A2%E7%83%A7%E8%82%89",
+        "login_markers": ["投稿 登录", "登录 综合 视频 用户", "验证码中间页"],
+    },
+}
+
+
+def _default_auth_contexts_path() -> Path:
+    override = os.environ.get(AUTH_CONTEXTS_ENV)
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".lex-browser-runtime" / "auth-contexts.json"
+
+
+def _run_runtime(args: list[str]) -> dict[str, Any]:
+    completed = subprocess.run(
+        [str(WRAPPER), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        sys.stderr.write(completed.stderr)
+        raise SystemExit(completed.returncode)
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        sys.stderr.write(completed.stdout)
+        raise SystemExit(f"failed to parse lexmount-browser JSON output: {exc}")
+    if payload.get("ok") is False:
+        raise SystemExit(json.dumps(payload, ensure_ascii=False, indent=2))
+    return payload
+
+
+def _load_store(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"version": 1, "contexts": {}}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"auth contexts file is not valid JSON: {path}: {exc}")
+    if not isinstance(payload, dict):
+        raise SystemExit(f"auth contexts file must contain an object: {path}")
+    contexts = payload.setdefault("contexts", {})
+    if not isinstance(contexts, dict):
+        raise SystemExit(f"auth contexts file contexts must be an object: {path}")
+    payload["version"] = 1
+    return payload
+
+
+def _save_context_entry(
+    path: Path,
+    *,
+    source_id: str,
+    context_id: str,
+    login_url: str,
+) -> None:
+    payload = _load_store(path)
+    payload["contexts"][source_id] = {
+        "context_id": context_id,
+        "context_mode": DEFAULT_CONTEXT_MODE,
+        "login_url": login_url,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _saved_context_id(path: Path, source_id: str) -> str | None:
+    payload = _load_store(path)
+    entry = payload["contexts"].get(source_id)
+    if not isinstance(entry, dict):
+        return None
+    context_id = entry.get("context_id")
+    if isinstance(context_id, str) and context_id:
+        return context_id
+    return None
+
+
+def _context_id_from(payload: dict[str, Any]) -> str:
+    context = payload.get("context")
+    if isinstance(context, dict):
+        context_id = context.get("context_id") or context.get("id")
+        if isinstance(context_id, str) and context_id:
+            return context_id
+    context_id = payload.get("context_id")
+    if isinstance(context_id, str) and context_id:
+        return context_id
+    raise SystemExit("context.create output did not include a context id")
+
+
+def _session_payload_from(payload: dict[str, Any]) -> dict[str, Any]:
+    session = payload.get("session")
+    if not isinstance(session, dict):
+        raise SystemExit("session.create output did not include a session object")
+    return session
+
+
+def _prelogin_source(source_id: str, auth_contexts_file: Path) -> None:
+    source = DEFAULT_SOURCES[source_id]
+    session_id = ""
+    context_id = _saved_context_id(auth_contexts_file, source_id)
+    if context_id:
+        print(f"\n[{source_id}] reusing saved context_id: {context_id}")
+    else:
+        metadata = json.dumps(
+            {"owner": "lexmount-browser-prelogin", "source_id": source_id},
+            ensure_ascii=False,
+        )
+        context_payload = _run_runtime(
+            ["context", "create", "--metadata-json", metadata]
+        )
+        context_id = _context_id_from(context_payload)
+    session_payload = _run_runtime(
+        [
+            "session",
+            "create",
+            "--context-id",
+            context_id,
+            "--context-mode",
+            "read_write",
+        ]
+    )
+    session = _session_payload_from(session_payload)
+    session_id = str(session.get("session_id") or "")
+    inspect_url = str(
+        session.get("inspect_url") or session.get("inspect_url_dbg") or ""
+    )
+    if not session_id:
+        raise SystemExit("session.create output did not include a session id")
+
+    try:
+        _run_runtime(
+            [
+                "action",
+                "open-url",
+                "--session-id",
+                session_id,
+                "--url",
+                source["login_url"],
+            ]
+        )
+        print(f"\n[{source_id}] context_id: {context_id}")
+        if inspect_url:
+            print(f"[{source_id}] inspect URL: {inspect_url}")
+        print(f"[{source_id}] Login URL opened: {source['login_url']}")
+        input(
+            f"[{source_id}] Finish manual login, then press Enter to save context..."
+        )
+
+        _run_runtime(
+            [
+                "action",
+                "open-url",
+                "--session-id",
+                session_id,
+                "--url",
+                source["probe_url"],
+            ]
+        )
+        snapshot = _run_runtime(
+            [
+                "action",
+                "snapshot",
+                "--session-id",
+                session_id,
+                "--max-chars",
+                "2000",
+            ]
+        )
+        result = snapshot.get("result")
+        text = str(result.get("text") if isinstance(result, dict) else "")
+        markers = source.get("login_markers") or []
+        if any(str(marker) in text for marker in markers):
+            print(f"[{source_id}] probe still looks like a login wall.")
+            answer = input(f"[{source_id}] Save this context anyway? [y/N] ")
+            if answer.strip().lower() not in {"y", "yes"}:
+                print(f"[{source_id}] skipped; context was not saved.")
+                return
+
+        _save_context_entry(
+            auth_contexts_file,
+            source_id=source_id,
+            context_id=context_id,
+            login_url=source["login_url"],
+        )
+        print(f"[{source_id}] saved to {auth_contexts_file}")
+    finally:
+        if session_id:
+            try:
+                _run_runtime(["session", "close", "--session-id", session_id])
+            except SystemExit as exc:
+                print(f"[{source_id}] warning: failed to close session: {exc}")
+
+
+def _parse_sources(raw: str) -> list[str]:
+    source_ids = [item.strip() for item in raw.split(",") if item.strip()]
+    unknown = [
+        source_id for source_id in source_ids if source_id not in DEFAULT_SOURCES
+    ]
+    if unknown:
+        raise SystemExit(f"unknown source id(s): {', '.join(unknown)}")
+    return source_ids
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Prelogin Lexmount contexts for research sources.",
+    )
+    parser.add_argument(
+        "--sources",
+        default="xiaohongshu,zhihu,weibo,douyin",
+        help="Comma-separated source ids to prelogin",
+    )
+    parser.add_argument(
+        "--auth-contexts-file",
+        type=Path,
+        default=_default_auth_contexts_path(),
+        help="Where to save source auth context ids",
+    )
+    args = parser.parse_args()
+
+    for source_id in _parse_sources(args.sources):
+        _prelogin_source(source_id, args.auth_contexts_file.expanduser())
+    print("\nPrelogin contexts saved. Future research runs use them automatically.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
