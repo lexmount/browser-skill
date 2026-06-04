@@ -3226,6 +3226,152 @@ def _docin_match_int(pattern: str, data: str) -> int | None:
     return int(match.group(0)) if match else None
 
 
+def _docin_attr(attrs: str, name: str) -> str | None:
+    match = re.search(
+        rf"\b{re.escape(name)}=[\"'](?P<value>.*?)[\"']",
+        attrs,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None
+    return html.unescape(match.group("value")).strip()
+
+
+def _docin_infer_format(title: str | None, block: str) -> str | None:
+    candidates = [title or "", block[:2000]]
+    for source in candidates:
+        match = re.search(
+            r"\.(docx?|xlsx?|pptx?|pdf|txt|zip|rar)\b",
+            _strip_html(source),
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return f".{match.group(1).lower()}"
+    return None
+
+
+def _docin_extract_snippet(block: str) -> str | None:
+    summary = _docin_match_text(
+        r'<dd[^>]*class=["\'][^"\']*\bsummary\b[^"\']*["\'][^>]*>(.*?)</dd>',
+        block,
+        max_length=420,
+    )
+    if summary:
+        return summary
+    return _compact_api_text(_strip_html(block), max_length=260) or None
+
+
+def _compact_docin_search_data(url: str, data: Any) -> dict[str, Any] | None:
+    """Parse Docin search-result HTML into candidate document links."""
+
+    parsed_url = urlsplit(url)
+    hostname = parsed_url.hostname or ""
+    if (
+        not hostname.endswith("docin.com")
+        or parsed_url.path != "/search.do"
+        or not isinstance(data, str)
+    ):
+        return None
+
+    query_params = parse_qs(parsed_url.query)
+    query = query_params.get("nkey", [""])[0]
+    result: dict[str, Any] = {
+        "docinSearchResult": True,
+        "url": url,
+    }
+    if query:
+        result["query"] = query
+
+    filters: dict[str, Any] = {}
+    dt = query_params.get("dt", [""])[0]
+    if dt == "3":
+        filters["format"] = "ppt"
+    elif dt:
+        filters["dt"] = dt
+    od = query_params.get("od", [""])[0]
+    if od == "2":
+        filters["sort"] = "most_read"
+    elif od:
+        filters["od"] = od
+    numpage = query_params.get("numpage", [""])[0]
+    if numpage == "2":
+        filters["pageRangeHint"] = "9-100"
+    elif numpage:
+        filters["numpage"] = numpage
+    year_type = query_params.get("yearType", [""])[0]
+    if year_type == "1":
+        filters["yearBucket"] = "current_calendar_year"
+    elif year_type == "2":
+        filters["yearBucket"] = "previous_calendar_year"
+    elif year_type:
+        filters["yearType"] = year_type
+    if filters:
+        result["filters"] = filters
+
+    total = _docin_match_int(r"找到相关结果约?\s*([\d,]+)\s*个", data)
+    if total is not None:
+        result["totalCount"] = total
+
+    items: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    anchor_re = re.compile(
+        r"<a\b(?P<attrs>[^>]*)\bhref=[\"'](?P<href>/p-(?P<id>\d+)\.html)[\"'][^>]*>(?P<body>.*?)</a>",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    for match in anchor_re.finditer(data):
+        doc_id = match.group("id")
+        if doc_id in seen_ids:
+            continue
+        seen_ids.add(doc_id)
+
+        block_start = data.rfind("<dl", 0, match.start())
+        if block_start == -1:
+            block_start = max(0, match.start() - 1200)
+        block_end = data.find("</dl>", match.end())
+        if block_end == -1:
+            block_end = min(len(data), match.end() + 1800)
+        else:
+            block_end += len("</dl>")
+        block = data[block_start:block_end]
+
+        attrs = match.group("attrs")
+        title = _docin_attr(attrs, "title") or _compact_api_text(
+            _strip_html(match.group("body")), max_length=260
+        )
+        item: dict[str, Any] = {
+            "rank": len(items) + 1,
+            "id": doc_id,
+            "url": urljoin(url, match.group("href")),
+        }
+        if title:
+            item["title"] = title
+        page_count = _docin_match_int(
+            r'<span[^>]*class=["\'][^"\']*\bpageno\b[^"\']*["\'][^>]*>(.*?)</span>',
+            block,
+        )
+        if page_count is not None:
+            item["pageCount"] = page_count
+        file_format = _docin_infer_format(title, block)
+        if file_format:
+            item["format"] = file_format
+        upload_time = _docin_match_text(
+            r"(20\d{2}-\d{1,2}-\d{1,2})", block, max_length=20
+        )
+        if upload_time:
+            item["uploadTimeHint"] = upload_time
+        snippet = _docin_extract_snippet(block)
+        if snippet:
+            item["snippet"] = snippet
+
+        items.append(item)
+        if len(items) >= 20:
+            break
+
+    if items:
+        result["items"] = items
+    return result if len(result) > 2 else None
+
+
 def _compact_docin_detail_data(url: str, data: Any) -> dict[str, Any] | None:
     """Parse Docin document detail HTML without relying on the heavy reader DOM."""
 
@@ -3327,6 +3473,378 @@ def _compact_docin_detail_data(url: str, data: Any) -> dict[str, Any] | None:
             result["categories"] = categories
 
     return result if len(result) > 2 else None
+
+
+def _gamespot_text(value: Any, *, max_length: int = 260) -> str | None:
+    if isinstance(value, dict):
+        value = (
+            value.get("rendered")
+            or value.get("raw")
+            or value.get("name")
+            or value.get("title")
+            or value.get("text")
+        )
+    return _compact_api_text(value, max_length=max_length)
+
+
+def _gamespot_self_href(item: dict[str, Any]) -> str | None:
+    links = item.get("_links")
+    if not isinstance(links, dict):
+        return None
+    self_links = links.get("self")
+    if not isinstance(self_links, list):
+        return None
+    for link in self_links:
+        if isinstance(link, dict) and isinstance(link.get("href"), str):
+            return link["href"]
+    return None
+
+
+def _compact_gamespot_search_data(url: str, data: Any) -> dict[str, Any] | None:
+    """Compact GameSpot WP REST search results into candidate review rows."""
+
+    parsed_url = urlsplit(url)
+    hostname = parsed_url.hostname or ""
+    if (
+        not hostname.endswith("gamespot.com")
+        or parsed_url.path != "/wp-json/wp/v2/search"
+        or not isinstance(data, list)
+    ):
+        return None
+
+    query_params = parse_qs(parsed_url.query)
+    result: dict[str, Any] = {
+        "gamespotReviewSearch": True,
+        "url": url,
+    }
+    query = query_params.get("search", [""])[0]
+    if query:
+        result["query"] = query
+    subtype = query_params.get("subtype", [""])[0]
+    if subtype:
+        result["subtype"] = subtype
+
+    items: list[dict[str, Any]] = []
+    for raw_item in data[:20]:
+        if not isinstance(raw_item, dict):
+            continue
+        item_url = raw_item.get("url")
+        api_url = _gamespot_self_href(raw_item)
+        item: dict[str, Any] = {
+            "rank": len(items) + 1,
+        }
+        for target, source in (
+            ("id", "id"),
+            ("type", "type"),
+            ("subtype", "subtype"),
+        ):
+            value = raw_item.get(source)
+            if value not in (None, ""):
+                item[target] = value
+        title = _gamespot_text(raw_item.get("title"))
+        if title:
+            item["title"] = title
+        if isinstance(item_url, str) and item_url:
+            item["url"] = item_url
+        if api_url:
+            item["apiUrl"] = api_url
+        if item.get("title") or item.get("url") or item.get("apiUrl"):
+            items.append(item)
+
+    if items:
+        result["items"] = items
+    return result if len(result) > 2 else None
+
+
+def _gamespot_walk_scalars(value: Any, *, depth: int = 0) -> list[tuple[str, Any]]:
+    if depth > 8:
+        return []
+    if isinstance(value, dict):
+        pairs: list[tuple[str, Any]] = []
+        for key, nested in value.items():
+            if isinstance(nested, (dict, list)):
+                pairs.extend(_gamespot_walk_scalars(nested, depth=depth + 1))
+            else:
+                pairs.append((str(key), nested))
+        return pairs
+    if isinstance(value, list):
+        pairs = []
+        for item in value[:20]:
+            pairs.extend(_gamespot_walk_scalars(item, depth=depth + 1))
+        return pairs
+    return []
+
+
+def _gamespot_find_scalar(data: dict[str, Any], key_patterns: tuple[str, ...]) -> Any:
+    for key, value in _gamespot_walk_scalars(data):
+        lower_key = key.lower()
+        if any(pattern in lower_key for pattern in key_patterns) and value not in (
+            None,
+            "",
+            [],
+        ):
+            return value
+    return None
+
+
+def _gamespot_score_from_text(text: str) -> str | None:
+    patterns = (
+        r'"ratingValue"\s*:\s*"?(\d+(?:\.\d+)?)"?',
+        r'"reviewRating"\s*:\s*\{[^}]*"ratingValue"\s*:\s*"?(\d+(?:\.\d+)?)"?',
+        r"\b(?:score|rating)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:/|out of)\s*10\b",
+        r"\b(\d+(?:\.\d+)?)\s*(?:/|out of)\s*10\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _gamespot_clean_section_item(value: str) -> str | None:
+    value = re.split(
+        r"\b(?:Like|Share|Related Tags|Follow Us|Copy link|Facebook|Bluesky)\b",
+        value,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    value = re.sub(r"\s+", " ", value).strip(" :-")
+    if len(value) <= 3:
+        return None
+    if re.fullmatch(r"[A-Za-z]{1,3}", value):
+        return None
+    return _compact_api_text(value, max_length=180)
+
+
+def _gamespot_section_items_from_html(
+    html_text: str, start_label: str, stop_labels: tuple[str, ...]
+) -> list[str]:
+    start_match = re.search(
+        rf"(?:>|^)\s*{re.escape(start_label)}\s*(?:<|$)",
+        html_text,
+        flags=re.IGNORECASE,
+    )
+    if not start_match:
+        return []
+    section = html_text[start_match.end() :]
+    stop_positions = [
+        match.start()
+        for label in stop_labels
+        if (
+            match := re.search(
+                rf"(?:>|^)\s*{re.escape(label)}\s*(?:<|$)",
+                section,
+                flags=re.IGNORECASE,
+            )
+        )
+    ]
+    if stop_positions:
+        section = section[: min(stop_positions)]
+    items = []
+    for raw_item in re.findall(
+        r"<li\b[^>]*>(.*?)</li>",
+        section,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        item = _gamespot_clean_section_item(_strip_html(raw_item))
+        if item:
+            items.append(item)
+        if len(items) >= 8:
+            break
+    return items
+
+
+def _gamespot_section_items(
+    text: str, start_label: str, stop_labels: tuple[str, ...]
+) -> list[str]:
+    stop_pattern = "|".join(re.escape(label) for label in stop_labels)
+    match = re.search(
+        rf"\b{re.escape(start_label)}\b\s*(.*?)(?:\b(?:{stop_pattern})\b|$)",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return []
+    section = match.group(1)
+    section = re.sub(r"\s+", " ", section).strip(" :-")
+    if not section:
+        return []
+    raw_items = re.split(r"\s*(?:[•*]|\n|-{2,}|;\s*)\s*", section)
+    items = []
+    for raw_item in raw_items:
+        item = _gamespot_clean_section_item(raw_item)
+        if item and item.lower() not in {"the good", "the bad"}:
+            items.append(item)
+        if len(items) >= 8:
+            break
+    return items
+
+
+def _gamespot_review_text_from_json(data: dict[str, Any]) -> str:
+    parts = []
+    for key in ("content", "excerpt"):
+        value = data.get(key)
+        if isinstance(value, dict):
+            for nested_value in value.values():
+                if isinstance(nested_value, (str, int, float)):
+                    parts.append(str(nested_value))
+        elif isinstance(value, str):
+            parts.append(value)
+    return _strip_html(" ".join(parts))
+
+
+def _gamespot_review_html_from_json(data: dict[str, Any]) -> str:
+    parts = []
+    for key in ("content", "excerpt"):
+        value = data.get(key)
+        if isinstance(value, dict):
+            rendered = value.get("rendered")
+            if isinstance(rendered, str):
+                parts.append(rendered)
+        elif isinstance(value, str):
+            parts.append(value)
+    return " ".join(parts)
+
+
+def _compact_gamespot_review_data(url: str, data: Any) -> dict[str, Any] | None:
+    """Compact GameSpot review REST/HTML into scorecard-like fields."""
+
+    parsed_url = urlsplit(url)
+    hostname = parsed_url.hostname or ""
+    if not hostname.endswith("gamespot.com"):
+        return None
+
+    is_rest_review = re.search(r"/wp-json/wp/v2/reviews/\d+/?$", parsed_url.path)
+    is_review_html = "/reviews/" in parsed_url.path
+    if not is_rest_review and not is_review_html:
+        return None
+
+    result: dict[str, Any] = {
+        "gamespotReviewDetail": True,
+        "url": url,
+    }
+    id_match = re.search(r"/(?:reviews/)?(\d+)(?:/?|$)", parsed_url.path)
+    if id_match:
+        result["id"] = id_match.group(1)
+
+    if isinstance(data, dict):
+        if data.get("id") not in (None, ""):
+            result["id"] = data["id"]
+        link = data.get("link")
+        if isinstance(link, str) and link:
+            result["articleUrl"] = link
+        title = _gamespot_text(data.get("title"))
+        if title:
+            result["title"] = title
+        for target, source in (("publishedAt", "date"), ("modifiedAt", "modified")):
+            value = data.get(source)
+            if isinstance(value, str) and value:
+                result[target] = value
+        embedded = data.get("_embedded")
+        if isinstance(embedded, dict) and isinstance(embedded.get("author"), list):
+            for author in embedded["author"]:
+                if isinstance(author, dict):
+                    name = _gamespot_text(author.get("name"), max_length=120)
+                    if name:
+                        result["reviewer"] = name
+                        break
+        if "reviewer" not in result:
+            reviewer = _gamespot_find_scalar(
+                data,
+                ("author_name", "authorname", "byline", "reviewer"),
+            )
+            reviewer_text = _gamespot_text(reviewer, max_length=120)
+            if reviewer_text:
+                result["reviewer"] = reviewer_text
+
+        score = _gamespot_find_scalar(
+            data,
+            ("review_score", "reviewscore", "score", "ratingvalue", "rating_value"),
+        )
+        score_text = _compact_api_text(score, max_length=32)
+        html_text = _gamespot_review_html_from_json(data)
+        text = _gamespot_review_text_from_json(data)
+        if not score_text:
+            score_text = _gamespot_score_from_text(json.dumps(data, ensure_ascii=False))
+        if not score_text:
+            score_text = _gamespot_score_from_text(text)
+        if score_text:
+            result["score"] = score_text
+        cons_stop_labels = (
+            "Verdict",
+            "The Bottom Line",
+            "About the Author",
+            "Like",
+            "Share",
+            "Related Tags",
+            "Follow Us",
+        )
+        pros = _gamespot_section_items_from_html(
+            html_text, "The Good", ("The Bad", "Verdict", "The Bottom Line")
+        ) or _gamespot_section_items(
+            text, "The Good", ("The Bad", "Verdict", "The Bottom Line")
+        )
+        cons = _gamespot_section_items_from_html(
+            html_text, "The Bad", cons_stop_labels
+        ) or _gamespot_section_items(text, "The Bad", cons_stop_labels)
+        if pros:
+            result["pros"] = pros
+        if cons:
+            result["cons"] = cons
+        verdict = _docin_match_text(
+            r"\bVerdict\b\s*(.*?)(?:About the Author|$)", text, max_length=500
+        )
+        if verdict:
+            result["verdict"] = verdict
+        if text:
+            result["textSnippet"] = text[:1200] + (
+                f"... [{len(text)} chars total]" if len(text) > 1200 else ""
+            )
+        return result if len(result) > 2 else None
+
+    if isinstance(data, str):
+        text = _strip_html(data)
+        title = _docin_match_text(r"<title[^>]*>(.*?)</title>", data, max_length=240)
+        if title:
+            result["title"] = title
+        score = _gamespot_score_from_text(data) or _gamespot_score_from_text(text)
+        if score:
+            result["score"] = score
+        reviewer = _docin_match_text(
+            r"\bBy\s+([A-Z][A-Za-z .'\-]{2,80})\s+(?:on|/)",
+            text,
+            max_length=120,
+        )
+        if reviewer:
+            result["reviewer"] = reviewer
+        cons_stop_labels = (
+            "Verdict",
+            "The Bottom Line",
+            "About the Author",
+            "Like",
+            "Share",
+            "Related Tags",
+            "Follow Us",
+        )
+        pros = _gamespot_section_items_from_html(
+            data, "The Good", ("The Bad", "Verdict", "The Bottom Line")
+        ) or _gamespot_section_items(
+            text, "The Good", ("The Bad", "Verdict", "The Bottom Line")
+        )
+        cons = _gamespot_section_items_from_html(
+            data, "The Bad", cons_stop_labels
+        ) or _gamespot_section_items(text, "The Bad", cons_stop_labels)
+        if pros:
+            result["pros"] = pros
+        if cons:
+            result["cons"] = cons
+        if text:
+            result["textSnippet"] = text[:1200] + (
+                f"... [{len(text)} chars total]" if len(text) > 1200 else ""
+            )
+        return result if len(result) > 2 else None
+
+    return None
 
 
 def _summarize_sina_hq_data(data: Any) -> str | None:
@@ -3784,6 +4302,113 @@ def _summarize_docin_detail_data(data: Any) -> str | None:
     return "; ".join(chunks)[:4000]
 
 
+def _summarize_docin_search_data(data: Any) -> str | None:
+    if not isinstance(data, dict) or not data.get("docinSearchResult"):
+        return None
+    chunks = ["docin_search"]
+    for label, key in (
+        ("query", "query"),
+        ("total", "totalCount"),
+        ("url", "url"),
+    ):
+        value = data.get(key)
+        if value not in (None, ""):
+            chunks.append(f"{label}={value}")
+    filters = data.get("filters")
+    if isinstance(filters, dict) and filters:
+        chunks.append(
+            "filters="
+            + ",".join(f"{key}:{value}" for key, value in list(filters.items())[:8])
+        )
+    items = data.get("items")
+    if isinstance(items, list) and items:
+        item_chunks = []
+        for item in items[:12]:
+            if not isinstance(item, dict):
+                continue
+            parts = []
+            for label, key in (
+                ("rank", "rank"),
+                ("id", "id"),
+                ("title", "title"),
+                ("pages", "pageCount"),
+                ("format", "format"),
+                ("upload", "uploadTimeHint"),
+                ("url", "url"),
+            ):
+                value = item.get(key)
+                if value not in (None, ""):
+                    parts.append(f"{label}={value}")
+            snippet = item.get("snippet")
+            if snippet:
+                parts.append(f"snippet={_compact_api_text(snippet, max_length=180)}")
+            if parts:
+                item_chunks.append("; ".join(parts))
+        if item_chunks:
+            chunks.append("items=" + " | ".join(item_chunks))
+    return "; ".join(chunks)[:4000]
+
+
+def _summarize_gamespot_search_data(data: Any) -> str | None:
+    if not isinstance(data, dict) or not data.get("gamespotReviewSearch"):
+        return None
+    chunks = ["gamespot_review_search"]
+    for label, key in (
+        ("query", "query"),
+        ("subtype", "subtype"),
+        ("url", "url"),
+    ):
+        value = data.get(key)
+        if value not in (None, ""):
+            chunks.append(f"{label}={value}")
+    items = data.get("items")
+    if isinstance(items, list) and items:
+        item_chunks = []
+        for item in items[:10]:
+            if not isinstance(item, dict):
+                continue
+            parts = []
+            for label, key in (
+                ("rank", "rank"),
+                ("id", "id"),
+                ("title", "title"),
+                ("url", "url"),
+                ("api", "apiUrl"),
+            ):
+                value = item.get(key)
+                if value not in (None, ""):
+                    parts.append(f"{label}={value}")
+            if parts:
+                item_chunks.append("; ".join(parts))
+        if item_chunks:
+            chunks.append("items=" + " | ".join(item_chunks))
+    return "; ".join(chunks)[:4000]
+
+
+def _summarize_gamespot_review_data(data: Any) -> str | None:
+    if not isinstance(data, dict) or not data.get("gamespotReviewDetail"):
+        return None
+    chunks = ["gamespot_review_detail"]
+    for label, key in (
+        ("id", "id"),
+        ("title", "title"),
+        ("score", "score"),
+        ("reviewer", "reviewer"),
+        ("date", "publishedAt"),
+        ("url", "articleUrl"),
+    ):
+        value = data.get(key)
+        if value not in (None, ""):
+            chunks.append(f"{label}={value}")
+    for label, key in (("pros", "pros"), ("cons", "cons")):
+        values = data.get(key)
+        if isinstance(values, list) and values:
+            chunks.append(f"{label}=" + "; ".join(str(value) for value in values[:6]))
+    if data.get("verdict"):
+        chunks.append(f"verdict={data['verdict']}")
+    return "; ".join(chunks)[:4000]
+
+
 def _summarize_api_data(url: str, data: Any, method: str = "GET") -> str:
     """Create a compact memory line so API results are not lost in flash mode."""
 
@@ -3900,6 +4525,24 @@ def _summarize_api_data(url: str, data: Any, method: str = "GET") -> str:
     docin_summary = _summarize_docin_detail_data(data)
     if docin_summary:
         return f"Called API {method.upper()} {urlsplit(url).path or url} ; {docin_summary}"[
+            :4000
+        ]
+
+    docin_search_summary = _summarize_docin_search_data(data)
+    if docin_search_summary:
+        return f"Called API {method.upper()} {urlsplit(url).path or url} ; {docin_search_summary}"[
+            :4000
+        ]
+
+    gamespot_search_summary = _summarize_gamespot_search_data(data)
+    if gamespot_search_summary:
+        return f"Called API {method.upper()} {urlsplit(url).path or url} ; {gamespot_search_summary}"[
+            :4000
+        ]
+
+    gamespot_review_summary = _summarize_gamespot_review_data(data)
+    if gamespot_review_summary:
+        return f"Called API {method.upper()} {urlsplit(url).path or url} ; {gamespot_review_summary}"[
             :4000
         ]
 
@@ -4040,7 +4683,10 @@ def _is_known_runtime_compact_api_data(data: Any) -> bool:
         "academiaWorkViews",
         "zalandoListing",
         "zalandoProductDetail",
+        "docinSearchResult",
         "docinDocumentDetail",
+        "gamespotReviewSearch",
+        "gamespotReviewDetail",
         "cqvipSearchResult",
         "archiveMetadata",
         "archiveAdvancedSearch",
@@ -4102,7 +4748,10 @@ def compact_api_data(url: str, data: Any) -> Any:
         _compact_sina_hq_data,
         _compact_sina_forex_kline_data,
         _compact_sina_gold_analysis_data,
+        _compact_docin_search_data,
         _compact_docin_detail_data,
+        _compact_gamespot_search_data,
+        _compact_gamespot_review_data,
         _compact_zalando_detail_data,
         _compact_zalando_listing_data,
         _compact_archive_data,
@@ -4266,7 +4915,17 @@ _BROWSER_USE_SERVICE_COMPAT_PRIVATE_NAMES = (
     "_summarize_cqvip_search_data",
     "_docin_match_text",
     "_docin_match_int",
+    "_compact_docin_search_data",
     "_compact_docin_detail_data",
+    "_gamespot_text",
+    "_gamespot_self_href",
+    "_compact_gamespot_search_data",
+    "_gamespot_walk_scalars",
+    "_gamespot_find_scalar",
+    "_gamespot_score_from_text",
+    "_gamespot_section_items",
+    "_gamespot_review_text_from_json",
+    "_compact_gamespot_review_data",
     "_summarize_sina_hq_data",
     "_summarize_sina_forex_kline_data",
     "_summarize_sina_gold_analysis_data",
@@ -4280,7 +4939,10 @@ _BROWSER_USE_SERVICE_COMPAT_PRIVATE_NAMES = (
     "_summarize_academia_views_data",
     "_summarize_zalando_listing_data",
     "_summarize_zalando_detail_data",
+    "_summarize_docin_search_data",
     "_summarize_docin_detail_data",
+    "_summarize_gamespot_search_data",
+    "_summarize_gamespot_review_data",
     "_summarize_api_data",
     "_is_known_runtime_compact_api_data",
 )

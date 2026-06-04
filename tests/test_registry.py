@@ -4,7 +4,10 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from lex_browser_runtime import AdapterEndpoint, AdapterRegistry, LexBrowserRuntime
+from lex_browser_runtime.registry import default_adapters_dir, default_site_hints_path
 from lex_browser_runtime.registry.utils import root_domain, task_domains
 
 
@@ -100,6 +103,75 @@ def test_runtime_records_capability_match(tmp_path: Path) -> None:
     assert match.has_capabilities
     assert snapshot["matched_adapter_count"] == 1
     assert snapshot["actions"][0]["kind"] == "match_capabilities"
+
+
+def test_registry_loads_packaged_runtime_contracts_by_default() -> None:
+    registry = AdapterRegistry()
+
+    assert registry.adapters_dir == default_adapters_dir()
+    assert registry.site_hints_path == default_site_hints_path()
+    assert registry.adapters_dir is not None
+    assert registry.site_hints_path is not None
+
+    match = registry.match(task="Use https://www.docin.com to search documents")
+
+    assert match.has_capabilities
+    assert any(endpoint.domain == "docin.com" for endpoint in match.adapters)
+    assert any("search\\.do" in endpoint.url_pattern for endpoint in match.adapters)
+    assert "docin.com" in match.site_notices
+
+    gamespot_match = registry.match(
+        task="Use https://www.gamespot.com to find a game review score"
+    )
+
+    assert gamespot_match.has_capabilities
+    assert any(
+        endpoint.domain == "gamespot.com" for endpoint in gamespot_match.adapters
+    )
+    assert any(
+        "wp-json/wp/v2/search" in endpoint.url_pattern
+        for endpoint in gamespot_match.adapters
+    )
+    assert "gamespot.com" in gamespot_match.site_notices
+
+
+def test_registry_matches_packaged_site_hint_by_conservative_alias() -> None:
+    registry = AdapterRegistry()
+
+    match = registry.match(task='Search for "vintage camera" on eBay and rank by bids')
+
+    assert "ebay.com" in match.site_notices
+    assert any(
+        strategy.name == "ebay_auction_ranked_cards_extract"
+        for strategy in match.site_notices["ebay.com"].strategies
+    )
+
+
+def test_registry_env_paths_override_packaged_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapters_dir = tmp_path / "adapters"
+    adapters_dir.mkdir()
+    _write_adapter(
+        adapters_dir / "example.com.json",
+        "example.com",
+        "https://api.example.com/search?q=test",
+    )
+    hints_path = tmp_path / "site_hints.yaml"
+    hints_path.write_text(
+        "example.com:\n  hints:\n    - Prefer the test fixture adapter.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LEX_BROWSER_RUNTIME_ADAPTERS_DIR", str(adapters_dir))
+    monkeypatch.setenv("LEX_BROWSER_RUNTIME_SITE_HINTS_PATH", str(hints_path))
+
+    registry = AdapterRegistry()
+    match = registry.match(task="Use https://www.example.com")
+
+    assert registry.adapters_dir == adapters_dir
+    assert registry.site_hints_path == hints_path
+    assert len(match.adapters) == 1
+    assert "example.com" in match.site_notices
 
 
 def test_adapter_endpoint_times_out_catastrophic_regex() -> None:

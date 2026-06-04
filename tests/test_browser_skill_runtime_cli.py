@@ -12,9 +12,11 @@ import pytest
 from lex_browser_runtime.browser.actions import (
     BrowserActionTarget,
     ClickRequest,
+    EvalRequest,
     SnapshotRequest,
     execute_browser_action_on_page,
     resolve_browser_action_connect_url,
+    run_browser_action,
 )
 from lex_browser_runtime.browser.cases import (
     run_case_file,
@@ -362,6 +364,216 @@ def test_execute_click_and_snapshot_actions_on_page() -> None:
     assert snapshot_result.result["title"] == "Example"
     assert snapshot_result.result["html"] == "<html><bo"
     assert snapshot_result.result["text"] == "body text"
+
+
+def test_readonly_browser_action_falls_back_to_raw_cdp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingChromium:
+        def connect_over_cdp(self, connect_url: str) -> Any:
+            assert connect_url == "ws://browser"
+            raise RuntimeError("targetInfo shared_worker assertion")
+
+    class FakePlaywright:
+        chromium = FailingChromium()
+
+    class FakeSyncPlaywright:
+        def __enter__(self) -> FakePlaywright:
+            return FakePlaywright()
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict[str, Any]] = []
+
+        def send(self, raw: str) -> None:
+            self.sent.append(json.loads(raw))
+
+        def recv(self) -> str:
+            message = self.sent[-1]
+            method = message["method"]
+            if method == "Target.getTargets":
+                result = {
+                    "targetInfos": [
+                        {
+                            "targetId": "worker",
+                            "type": "shared_worker",
+                            "url": "blob:https://example.com/worker",
+                        },
+                        {
+                            "targetId": "page",
+                            "type": "page",
+                            "url": "https://example.com",
+                        },
+                    ]
+                }
+            elif method == "Target.attachToTarget":
+                result = {"sessionId": "session-page"}
+            elif method == "Runtime.evaluate":
+                result = {
+                    "result": {
+                        "value": {
+                            "url": "https://example.com",
+                            "title": "Example",
+                            "html": "<html><body>hello</body></html>",
+                            "text": "hello",
+                        }
+                    }
+                }
+            else:
+                result = {}
+            return json.dumps({"id": message["id"], "result": result})
+
+        def close(self) -> None:
+            return None
+
+    fake_socket = FakeWebSocket()
+    sync_api_module = ModuleType("playwright.sync_api")
+    setattr(sync_api_module, "sync_playwright", FakeSyncPlaywright)
+    websocket_module = ModuleType("websocket")
+    setattr(websocket_module, "create_connection", lambda url, timeout: fake_socket)
+    monkeypatch.setitem(sys.modules, "playwright", ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api_module)
+    monkeypatch.setitem(sys.modules, "websocket", websocket_module)
+
+    result = run_browser_action(
+        connect_url="ws://browser",
+        action="snapshot",
+        request=SnapshotRequest(max_chars=12),
+    )
+
+    assert result.result["fallback"] == "cdp"
+    assert result.result["url"] == "https://example.com"
+    assert result.result["html"] == "<html><body>"
+    assert any(
+        message["method"] == "Target.attachToTarget" for message in fake_socket.sent
+    )
+
+
+def test_eval_browser_action_fallback_wraps_arrow_function(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingChromium:
+        def connect_over_cdp(self, connect_url: str) -> Any:
+            del connect_url
+            raise RuntimeError("targetInfo shared_worker assertion")
+
+    class FakePlaywright:
+        chromium = FailingChromium()
+
+    class FakeSyncPlaywright:
+        def __enter__(self) -> FakePlaywright:
+            return FakePlaywright()
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict[str, Any]] = []
+
+        def send(self, raw: str) -> None:
+            self.sent.append(json.loads(raw))
+
+        def recv(self) -> str:
+            message = self.sent[-1]
+            method = message["method"]
+            if method == "Target.getTargets":
+                result = {
+                    "targetInfos": [
+                        {
+                            "targetId": "page",
+                            "type": "page",
+                            "url": "https://example.com",
+                        }
+                    ]
+                }
+            elif method == "Target.attachToTarget":
+                result = {"sessionId": "session-page"}
+            elif method == "Runtime.evaluate":
+                result = {"result": {"value": 42}}
+            else:
+                result = {}
+            return json.dumps({"id": message["id"], "result": result})
+
+        def close(self) -> None:
+            return None
+
+    fake_socket = FakeWebSocket()
+    sync_api_module = ModuleType("playwright.sync_api")
+    setattr(sync_api_module, "sync_playwright", FakeSyncPlaywright)
+    websocket_module = ModuleType("websocket")
+    setattr(websocket_module, "create_connection", lambda url, timeout: fake_socket)
+    monkeypatch.setitem(sys.modules, "playwright", ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api_module)
+    monkeypatch.setitem(sys.modules, "websocket", websocket_module)
+
+    result = run_browser_action(
+        connect_url="ws://browser",
+        action="eval",
+        request=EvalRequest(expression="() => 42"),
+    )
+
+    runtime_calls = [
+        message
+        for message in fake_socket.sent
+        if message["method"] == "Runtime.evaluate"
+    ]
+    assert result.result["fallback"] == "cdp"
+    assert result.result["value"] == 42
+    assert runtime_calls[0]["params"]["expression"] == "(() => 42)()"
+
+
+def test_readonly_browser_action_falls_back_when_playwright_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict[str, Any]] = []
+
+        def send(self, raw: str) -> None:
+            self.sent.append(json.loads(raw))
+
+        def recv(self) -> str:
+            message = self.sent[-1]
+            method = message["method"]
+            if method == "Target.getTargets":
+                result = {
+                    "targetInfos": [
+                        {
+                            "targetId": "page",
+                            "type": "page",
+                            "url": "https://example.com",
+                        }
+                    ]
+                }
+            elif method == "Target.attachToTarget":
+                result = {"sessionId": "session-page"}
+            elif method == "Runtime.evaluate":
+                result = {"result": {"value": 7}}
+            else:
+                result = {}
+            return json.dumps({"id": message["id"], "result": result})
+
+        def close(self) -> None:
+            return None
+
+    fake_socket = FakeWebSocket()
+    websocket_module = ModuleType("websocket")
+    setattr(websocket_module, "create_connection", lambda url, timeout: fake_socket)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", None)
+    monkeypatch.setitem(sys.modules, "websocket", websocket_module)
+
+    result = run_browser_action(
+        connect_url="ws://browser",
+        action="eval",
+        request=EvalRequest(expression="7"),
+    )
+
+    assert result.result["fallback"] == "cdp"
+    assert result.result["value"] == 7
 
 
 def test_case_validate_matches_browser_skill_shape(tmp_path: Any) -> None:

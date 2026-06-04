@@ -27,6 +27,8 @@ def has_answerable_runtime_state(metadata: dict[str, Any] | None) -> bool:
 
     page_program = metadata.get("page_program")
     if isinstance(page_program, dict) and page_program.get("ok") is True:
+        if metadata.get("runtime_compact_state") is True:
+            return True
         extracted = page_program.get("extracted")
         if extracted:
             return True
