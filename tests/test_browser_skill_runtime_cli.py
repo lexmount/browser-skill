@@ -576,6 +576,68 @@ def test_readonly_browser_action_falls_back_when_playwright_missing(
     assert result.result["value"] == 7
 
 
+def test_eval_browser_action_cdp_fallback_raises_javascript_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict[str, Any]] = []
+
+        def send(self, raw: str) -> None:
+            self.sent.append(json.loads(raw))
+
+        def recv(self) -> str:
+            message = self.sent[-1]
+            method = message["method"]
+            if method == "Target.getTargets":
+                result = {
+                    "targetInfos": [
+                        {
+                            "targetId": "page",
+                            "type": "page",
+                            "url": "https://example.com",
+                        }
+                    ]
+                }
+            elif method == "Target.attachToTarget":
+                result = {"sessionId": "session-page"}
+            elif method == "Runtime.evaluate":
+                result = {
+                    "result": {
+                        "type": "object",
+                        "subtype": "error",
+                        "description": "ReferenceError: missingValue is not defined",
+                    },
+                    "exceptionDetails": {
+                        "text": "Uncaught",
+                        "exception": {
+                            "description": "ReferenceError: missingValue is not defined"
+                        },
+                    },
+                }
+            else:
+                result = {}
+            return json.dumps({"id": message["id"], "result": result})
+
+        def close(self) -> None:
+            return None
+
+    websocket_module = ModuleType("websocket")
+    setattr(websocket_module, "create_connection", lambda url, timeout: FakeWebSocket())
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", None)
+    monkeypatch.setitem(sys.modules, "websocket", websocket_module)
+
+    with pytest.raises(
+        BrowserRuntimeError,
+        match="JavaScript error: Uncaught: ReferenceError: missingValue",
+    ):
+        run_browser_action(
+            connect_url="ws://browser",
+            action="eval",
+            request=EvalRequest(expression="() => missingValue"),
+        )
+
+
 def test_case_validate_matches_browser_skill_shape(tmp_path: Any) -> None:
     case_path = tmp_path / "case.json"
     case_path.write_text(

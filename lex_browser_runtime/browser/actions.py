@@ -210,6 +210,28 @@ def _cdp_eval_expression(expression: str) -> str:
     return source
 
 
+def _format_cdp_runtime_exception(details: dict[str, Any]) -> str:
+    text = str(details.get("text") or "JavaScript execution failed")
+    exception = details.get("exception")
+    if isinstance(exception, dict):
+        description = exception.get("description")
+        value = exception.get("value")
+        class_name = exception.get("className")
+        detail = description or value or class_name
+        if detail:
+            return f"{text}: {detail}"
+    return text
+
+
+def _raise_for_cdp_runtime_exception(evaluated: dict[str, Any]) -> None:
+    details = evaluated.get("exceptionDetails")
+    if isinstance(details, dict):
+        raise BrowserRuntimeError(
+            "CDP Runtime.evaluate JavaScript error: "
+            f"{_format_cdp_runtime_exception(details)}"
+        )
+
+
 def _run_readonly_action_via_cdp(
     *,
     connect_url: str,
@@ -243,6 +265,7 @@ def _run_readonly_action_via_cdp(
                 },
                 session_id=session_id,
             )
+            _raise_for_cdp_runtime_exception(evaluated)
             result = evaluated.get("result", {})
             value = result.get("value") if isinstance(result, dict) else None
             return BrowserActionResult(
@@ -274,6 +297,7 @@ def _run_readonly_action_via_cdp(
                 },
                 session_id=session_id,
             )
+            _raise_for_cdp_runtime_exception(evaluated)
             result = evaluated.get("result", {})
             value = result.get("value") if isinstance(result, dict) else {}
             if not isinstance(value, dict):
