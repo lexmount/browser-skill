@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -131,6 +132,200 @@ def resolve_browser_action_connect_url(
     raise BrowserRuntimeError(
         "Pass one of connect_url, session_id, or direct_url for browser action target."
     )
+
+
+class _CdpConnection:
+    """Tiny synchronous CDP client for read-only fallback actions."""
+
+    def __init__(self, connect_url: str) -> None:
+        try:
+            from websocket import create_connection  # type: ignore[import-untyped]
+        except Exception as exc:
+            raise BrowserConfigError(
+                "Failed to import websocket-client. Install "
+                "lex-browser-runtime[browser] to enable CDP fallback actions."
+            ) from exc
+
+        self._ws = create_connection(connect_url, timeout=15)
+        self._next_id = 0
+
+    def close(self) -> None:
+        self._ws.close()
+
+    def send(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        self._next_id += 1
+        message: dict[str, Any] = {"id": self._next_id, "method": method}
+        if params is not None:
+            message["params"] = params
+        if session_id is not None:
+            message["sessionId"] = session_id
+        self._ws.send(json.dumps(message))
+
+        while True:
+            raw = self._ws.recv()
+            payload = json.loads(raw)
+            if payload.get("id") != self._next_id:
+                continue
+            if "error" in payload:
+                raise BrowserRuntimeError(f"CDP {method} failed: {payload['error']}")
+            result = payload.get("result", {})
+            return result if isinstance(result, dict) else {}
+
+
+def _select_cdp_page_target(targets: list[dict[str, Any]]) -> dict[str, Any]:
+    """Choose the best page target while ignoring workers and extension pages."""
+
+    page_targets = [
+        target
+        for target in targets
+        if target.get("type") == "page"
+        and not str(target.get("url") or "").startswith("devtools://")
+    ]
+    if not page_targets:
+        raise BrowserRuntimeError("CDP fallback could not find a page target")
+    active_targets = [
+        target
+        for target in page_targets
+        if str(target.get("url") or "") not in {"", "about:blank"}
+    ]
+    return (active_targets or page_targets)[-1]
+
+
+def _cdp_eval_expression(expression: str) -> str:
+    """Match Playwright page.evaluate semantics for common function strings."""
+
+    source = expression.strip()
+    if (
+        source.startswith("() =>")
+        or source.startswith("async () =>")
+        or source.startswith("function")
+    ):
+        return f"({source})()"
+    return source
+
+
+def _format_cdp_runtime_exception(details: dict[str, Any]) -> str:
+    text = str(details.get("text") or "JavaScript execution failed")
+    exception = details.get("exception")
+    if isinstance(exception, dict):
+        description = exception.get("description")
+        value = exception.get("value")
+        class_name = exception.get("className")
+        detail = description or value or class_name
+        if detail:
+            return f"{text}: {detail}"
+    return text
+
+
+def _raise_for_cdp_runtime_exception(evaluated: dict[str, Any]) -> None:
+    details = evaluated.get("exceptionDetails")
+    if isinstance(details, dict):
+        raise BrowserRuntimeError(
+            "CDP Runtime.evaluate JavaScript error: "
+            f"{_format_cdp_runtime_exception(details)}"
+        )
+
+
+def _run_readonly_action_via_cdp(
+    *,
+    connect_url: str,
+    action: BrowserActionName,
+    request: BrowserActionRequest,
+) -> BrowserActionResult:
+    """Run eval/snapshot directly through CDP without attaching to every target."""
+
+    cdp = _CdpConnection(connect_url)
+    session_id: str | None = None
+    try:
+        targets = cdp.send("Target.getTargets").get("targetInfos", [])
+        if not isinstance(targets, list):
+            raise BrowserRuntimeError("CDP Target.getTargets returned invalid data")
+        target = _select_cdp_page_target(targets)
+        attached = cdp.send(
+            "Target.attachToTarget",
+            {"targetId": target["targetId"], "flatten": True},
+        )
+        session_id = str(attached["sessionId"])
+
+        if action == "eval":
+            if not isinstance(request, EvalRequest):
+                raise TypeError("eval action requires EvalRequest")
+            evaluated = cdp.send(
+                "Runtime.evaluate",
+                {
+                    "expression": _cdp_eval_expression(request.expression),
+                    "returnByValue": True,
+                    "awaitPromise": True,
+                },
+                session_id=session_id,
+            )
+            _raise_for_cdp_runtime_exception(evaluated)
+            result = evaluated.get("result", {})
+            value = result.get("value") if isinstance(result, dict) else None
+            return BrowserActionResult(
+                action=action,
+                result={
+                    "url": target.get("url", ""),
+                    "expression": request.expression,
+                    "value": value,
+                    "fallback": "cdp",
+                },
+            )
+
+        if action == "snapshot":
+            if not isinstance(request, SnapshotRequest):
+                raise TypeError("snapshot action requires SnapshotRequest")
+            evaluated = cdp.send(
+                "Runtime.evaluate",
+                {
+                    "expression": """
+(() => ({
+  url: location.href,
+  title: document.title,
+  html: document.documentElement ? document.documentElement.outerHTML : "",
+  text: document.body ? document.body.innerText : ""
+}))()
+""".strip(),
+                    "returnByValue": True,
+                    "awaitPromise": True,
+                },
+                session_id=session_id,
+            )
+            _raise_for_cdp_runtime_exception(evaluated)
+            result = evaluated.get("result", {})
+            value = result.get("value") if isinstance(result, dict) else {}
+            if not isinstance(value, dict):
+                value = {}
+            html = str(value.get("html") or "")
+            body_text = str(value.get("text") or "")
+            if request.max_chars > 0:
+                html = html[: request.max_chars]
+                body_text = body_text[: request.max_chars]
+            return BrowserActionResult(
+                action=action,
+                result={
+                    "url": str(value.get("url") or target.get("url") or ""),
+                    "title": str(value.get("title") or ""),
+                    "html": html,
+                    "text": body_text,
+                    "fallback": "cdp",
+                },
+            )
+
+        raise ValueError(f"CDP fallback does not support browser action: {action}")
+    finally:
+        if session_id is not None:
+            try:
+                cdp.send("Target.detachFromTarget", {"sessionId": session_id})
+            except Exception:
+                pass
+        cdp.close()
 
 
 def get_or_create_page(context: Any) -> Any:
@@ -276,16 +471,43 @@ def run_browser_action(
     try:
         from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
     except Exception as exc:
+        if action in {"eval", "snapshot"}:
+            try:
+                return _run_readonly_action_via_cdp(
+                    connect_url=connect_url,
+                    action=action,
+                    request=request,
+                )
+            except Exception as fallback_exc:
+                raise BrowserRuntimeError(
+                    f"{action} failed without Playwright and CDP fallback failed: {fallback_exc}"
+                ) from exc
         raise BrowserConfigError(
             "Failed to import Playwright. Install lex-browser-runtime[browser] "
             "or provide an environment that already includes playwright."
         ) from exc
 
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.connect_over_cdp(connect_url)
-        try:
-            context = browser.contexts[0] if browser.contexts else browser.new_context()
-            page = get_or_create_page(context)
-            return execute_browser_action_on_page(page, action, request)
-        finally:
-            browser.close()
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.connect_over_cdp(connect_url)
+            try:
+                context = (
+                    browser.contexts[0] if browser.contexts else browser.new_context()
+                )
+                page = get_or_create_page(context)
+                return execute_browser_action_on_page(page, action, request)
+            finally:
+                browser.close()
+    except Exception as exc:
+        if action in {"eval", "snapshot"}:
+            try:
+                return _run_readonly_action_via_cdp(
+                    connect_url=connect_url,
+                    action=action,
+                    request=request,
+                )
+            except Exception as fallback_exc:
+                raise BrowserRuntimeError(
+                    f"{action} failed via Playwright and CDP fallback: {fallback_exc}"
+                ) from exc
+        raise

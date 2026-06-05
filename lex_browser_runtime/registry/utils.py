@@ -7,6 +7,12 @@ from urllib.parse import urlparse
 
 SAFE_DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
 URL_TRAILING_PUNCTUATION = ".,;:!?，。；：！？"
+DOMAIN_ALIASES: dict[str, tuple[str, ...]] = {
+    "ebay.com": ("ebay",),
+    "gamespot.com": ("gamespot", "game spot"),
+    "le.com": ("le.com", "letv", "le tv", "乐视", "乐视视频"),
+    "nih.gov": ("nih", "ncbi", "pmc", "pubmed central", "pubmed"),
+}
 
 TWO_PART_TLDS = {
     "co.uk",
@@ -80,6 +86,51 @@ def task_domains(task: str) -> set[str]:
             domains.add(host.lower().rstrip("."))
             domains.add(root_domain(host))
     return {domain for domain in domains if domain}
+
+
+def domain_aliases(domain: str) -> set[str]:
+    """Return conservative textual aliases that can safely identify a known site."""
+
+    root = root_domain(domain)
+    aliases = {root}
+    label = root.split(".", 1)[0]
+    if len(label) >= 4:
+        aliases.add(label)
+        aliases.add(label.replace("-", " "))
+    aliases.update(DOMAIN_ALIASES.get(root, ()))
+    return {alias.lower() for alias in aliases if alias}
+
+
+def contains_alias(task: str, alias: str) -> bool:
+    """Return whether *alias* appears as a standalone site token in *task*."""
+
+    normalized_task = (task or "").lower()
+    normalized_alias = alias.lower().strip()
+    if not normalized_alias:
+        return False
+    if "." in normalized_alias or any(
+        "\u4e00" <= char <= "\u9fff" for char in normalized_alias
+    ):
+        return normalized_alias in normalized_task
+    return bool(
+        re.search(
+            rf"(?<![a-z0-9]){re.escape(normalized_alias)}(?![a-z0-9])",
+            normalized_task,
+        )
+    )
+
+
+def task_notice_domains(task: str, known_domains: set[str]) -> set[str]:
+    """Match known site notices from explicit URLs plus conservative site aliases."""
+
+    domains = set(task_domains(task))
+    for domain in known_domains:
+        root = root_domain(domain)
+        if root in domains:
+            continue
+        if any(contains_alias(task, alias) for alias in domain_aliases(root)):
+            domains.add(root)
+    return domains
 
 
 def coerce_hint_list(value: object) -> list[str]:

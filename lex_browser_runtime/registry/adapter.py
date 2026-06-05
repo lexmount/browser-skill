@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from lex_browser_runtime.registry.models import (
@@ -17,9 +18,60 @@ from lex_browser_runtime.registry.utils import (
     safe_domain_name,
     safe_host_name,
     task_domains,
+    task_notice_domains,
 )
 
 logger = logging.getLogger(__name__)
+
+_DATA_DIR = Path(__file__).resolve().parent / "data"
+_DEFAULT_ADAPTERS_DIR = _DATA_DIR / "adapters"
+_DEFAULT_SITE_HINTS_PATH = _DATA_DIR / "site_hints.yaml"
+_ADAPTERS_DIR_ENV = "LEX_BROWSER_RUNTIME_ADAPTERS_DIR"
+_SITE_HINTS_PATH_ENV = "LEX_BROWSER_RUNTIME_SITE_HINTS_PATH"
+_DISABLE_DEFAULT_REGISTRY_ENV = "LEX_BROWSER_RUNTIME_DISABLE_DEFAULT_REGISTRY"
+
+
+def default_adapters_dir() -> Path | None:
+    """Return the packaged adapter registry directory when available."""
+
+    return _DEFAULT_ADAPTERS_DIR if _DEFAULT_ADAPTERS_DIR.exists() else None
+
+
+def default_site_hints_path() -> Path | None:
+    """Return the packaged site-hints registry file when available."""
+
+    return _DEFAULT_SITE_HINTS_PATH if _DEFAULT_SITE_HINTS_PATH.exists() else None
+
+
+def _default_registry_disabled() -> bool:
+    return os.getenv(_DISABLE_DEFAULT_REGISTRY_ENV, "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _resolve_adapters_dir(adapters_dir: str | Path | None) -> Path | None:
+    if adapters_dir:
+        return Path(adapters_dir)
+    env_value = os.getenv(_ADAPTERS_DIR_ENV)
+    if env_value:
+        return Path(env_value)
+    if _default_registry_disabled():
+        return None
+    return default_adapters_dir()
+
+
+def _resolve_site_hints_path(site_hints_path: str | Path | None) -> Path | None:
+    if site_hints_path:
+        return Path(site_hints_path)
+    env_value = os.getenv(_SITE_HINTS_PATH_ENV)
+    if env_value:
+        return Path(env_value)
+    if _default_registry_disabled():
+        return None
+    return default_site_hints_path()
 
 
 class AdapterRegistry:
@@ -30,14 +82,20 @@ class AdapterRegistry:
         adapters_dir: str | Path | None = None,
         site_hints_path: str | Path | None = None,
     ) -> None:
-        self._adapters_dir = Path(adapters_dir) if adapters_dir else None
-        self._site_hints_path = Path(site_hints_path) if site_hints_path else None
+        self._adapters_dir = _resolve_adapters_dir(adapters_dir)
+        self._site_hints_path = _resolve_site_hints_path(site_hints_path)
 
     @property
     def adapters_dir(self) -> Path | None:
         """Return the adapter directory, if configured."""
 
         return self._adapters_dir
+
+    @property
+    def site_hints_path(self) -> Path | None:
+        """Return the site-hints file, if configured."""
+
+        return self._site_hints_path
 
     def _domain_file(self, domain: str) -> Path:
         if self._adapters_dir is None:
@@ -143,7 +201,9 @@ class AdapterRegistry:
     def match(self, *, task: str = "", url: str | None = None) -> CapabilityMatch:
         """Match adapters and site notices for a task and optional URL."""
 
+        site_notices = load_site_hints(self._site_hints_path)
         domains = set(task_domains(task))
+        domains.update(task_notice_domains(task, set(site_notices)))
         if url:
             domains.add(root_domain(url))
             try:
@@ -153,7 +213,6 @@ class AdapterRegistry:
 
         adapters: list[AdapterEndpoint] = []
         seen_patterns: set[str] = set()
-        site_notices = load_site_hints(self._site_hints_path)
         matched_notices = {}
 
         for domain in sorted(domains):

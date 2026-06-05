@@ -1,6 +1,10 @@
 """Runtime capability registry."""
 
-from lex_browser_runtime.registry.adapter import AdapterRegistry
+from lex_browser_runtime.registry.adapter import (
+    AdapterRegistry,
+    default_adapters_dir,
+    default_site_hints_path,
+)
 from lex_browser_runtime.registry.models import (
     AdapterEndpoint,
     CapabilityMatch,
@@ -17,5 +21,7 @@ __all__ = [
     "RuntimeStrategy",
     "RuntimeStrategyAction",
     "SiteNotice",
+    "default_adapters_dir",
+    "default_site_hints_path",
     "load_site_hints",
 ]
