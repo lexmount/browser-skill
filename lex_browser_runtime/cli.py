@@ -650,12 +650,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Build source-specific research jobs without opening browsers",
     )
     research_route.add_argument("--query", required=True)
-    research_route.add_argument("--preset", default="food", choices=["food", "web"])
+    research_route.add_argument(
+        "--preset",
+        default="food",
+        choices=["food", "gov-policy", "web"],
+    )
     research_route.add_argument(
         "--sites",
-        help="Comma-separated source ids such as baidu,bing,xiaohongshu",
+        help="Comma-separated source ids such as baidu,bing,bilibili",
     )
-    research_route.add_argument("--max-sites", type=int, default=10)
+    research_route.add_argument("--max-sites", type=int, default=13)
     research_route.set_defaults(func=cmd_research_route)
 
     research_run = research_subparsers.add_parser(
@@ -663,12 +667,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Open Lexmount browser sessions and extract source evidence",
     )
     research_run.add_argument("--query", required=True)
-    research_run.add_argument("--preset", default="food", choices=["food", "web"])
+    research_run.add_argument(
+        "--preset",
+        default="food",
+        choices=["food", "gov-policy", "web"],
+    )
     research_run.add_argument(
         "--sites",
-        help="Comma-separated source ids such as baidu,bing,xiaohongshu",
+        help="Comma-separated source ids such as baidu,bing,bilibili",
     )
-    research_run.add_argument("--max-sites", type=int, default=10)
+    research_run.add_argument("--max-sites", type=int, default=13)
     research_run.add_argument(
         "--concurrency",
         type=int,

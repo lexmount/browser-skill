@@ -30,12 +30,21 @@ def test_research_observer_starts_run_and_records_browser_events() -> None:
         assert kwargs["sites"] == "baidu"
         assert kwargs["max_sites"] == 1
         assert kwargs["concurrency"] == 1
-        assert kwargs["keep_sessions"] is True
+        assert kwargs["keep_sessions"] is False
         on_event = kwargs["on_event"]
         assert callable(on_event)
         on_event(
             {
                 "type": "browser_created",
+                "source_id": "baidu",
+                "source_name": "Baidu web",
+                "session_id": "session_123",
+                "inspect_url": "https://browser.lexmount.test/inspect/session_123",
+            }
+        )
+        on_event(
+            {
+                "type": "browser_closed",
                 "source_id": "baidu",
                 "source_name": "Baidu web",
                 "session_id": "session_123",
@@ -59,14 +68,10 @@ def test_research_observer_starts_run_and_records_browser_events() -> None:
 
     assert state["status"] == "finished"
     assert state["summary"] == {"ok": True, "summary_path": "/tmp/summary.json"}
-    assert state["active_sessions"] == [
-        {
-            "session_id": "session_123",
-            "inspect_url": "https://browser.lexmount.test/inspect/session_123",
-        }
-    ]
+    assert state["active_sessions"] == []
     assert [event["type"] for event in state["events"]] == [
         "browser_created",
+        "browser_closed",
         "observer_run_finished",
     ]
 
@@ -297,6 +302,63 @@ def test_observer_http_accepts_external_run_events() -> None:
         thread.join(timeout=2)
 
 
+def test_observer_event_stream_resumes_after_last_event_id() -> None:
+    observer = ResearchObserver()
+    observer.create_observed_run(run_id="codex-run-resume", query="query")
+    observer.record_external_event(
+        "codex-run-resume",
+        {
+            "type": "research_started",
+            "job_count": 1,
+            "concurrency": 1,
+            "jobs": [{"rank": 1, "source_id": "baidu"}],
+        },
+    )
+    observer.record_external_event(
+        "codex-run-resume",
+        {
+            "type": "browser_created",
+            "source_id": "baidu",
+            "session_id": "session_resume",
+            "inspect_url": "https://browser.lexmount.test/inspect/session_resume",
+        },
+    )
+    observer.record_external_event(
+        "codex-run-resume",
+        {"type": "observer_run_finished", "status": "finished"},
+    )
+
+    server = create_observer_server(("127.0.0.1", 0), observer=observer)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        response = request.urlopen(
+            request.Request(
+                f"{base_url}/api/runs/codex-run-resume/events",
+                headers={"Last-Event-ID": "1"},
+            ),
+            timeout=2,
+        )
+        lines: list[str] = []
+        while True:
+            line = response.readline().decode("utf-8")
+            if not line:
+                break
+            lines.append(line)
+            if "observer_run_finished" in line:
+                break
+        stream = "".join(lines)
+
+        assert "id: 2" in stream
+        assert "browser_created" in stream
+        assert "observer_run_finished" in stream
+        assert "research_started" not in stream
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
 def test_observer_tracks_prepared_browser_without_requiring_display_event() -> None:
     observer = ResearchObserver()
     observer.create_observed_run(run_id="codex-run-prepared", query="query")
@@ -422,9 +484,27 @@ def test_observer_page_prioritizes_large_five_column_browser_grid() -> None:
         assert "height: clamp(620px, 70vh, 860px);" in html
         assert 'id="eventList"' in html
         assert 'id="answerPanel"' in html
+        assert '<div class="empty" data-empty="browsers">' in html
         assert "renderAnswer" in html
         assert "browserSlots" in html
+        assert "const sessionKeys = new Map();" in html
+        assert "function keyForBrowserEvent(event)" in html
+        assert '${currentRunId || "run"}:${rawKey}' in html
+        assert "inspect_url: browser.inspect_url || previous.inspect_url" in html
         assert 'data.type === "browser_prepared"' in html
+        assert 'data.type === "browser_closed"' in html
+        assert "upsertBrowser(" in html
+        assert "removeBrowser(" in html
+        assert "browserGrid.innerHTML = \"\";" not in html
+        research_started_block = html.split(
+            'if (data.type === "research_started" && Array.isArray(data.jobs))',
+            maxsplit=1,
+        )[1].split('if (data.type === "browser_prepared")', maxsplit=1)[0]
+        assert "clearBrowsers();" not in research_started_block
+        assert "const frame = card.querySelector(\"iframe\")" in html
+        assert "if (!frame)" in html
+        assert "frame.dataset.inspectUrl !== next.inspect_url" in html
+        assert "frame.src !== browser.inspect_url" not in html
         assert 'data.type === "research_started" && Array.isArray(data.jobs)' in html
         assert 'status: "Preparing"' in html
         assert 'status: "Login ready"' in html
