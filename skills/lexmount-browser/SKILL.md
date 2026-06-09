@@ -1,6 +1,6 @@
 ---
 name: lexmount-browser
-description: Use when the user wants Claude Code or Codex to create, reuse, inspect, or operate a Lexmount remote browser through lex-browser-runtime, including multi-source browser research when the user asks to use Lexmount Browser. Provides a stable installed-skill wrapper for session/context lifecycle, direct-url, primitive browser actions, browser case validation/run, and research route/run without hand-written curl or ad hoc Playwright scripts.
+description: Use when the user asks for web research, search, recommendations, comparison, evidence gathering, website inspection, browser automation, page interaction, form filling, login-gated browsing, screenshots, scraping/extraction, or operating a remote browser with Lexmount Browser.
 allowed-tools: Bash
 ---
 
@@ -13,6 +13,22 @@ The skill is intentionally thin: it delegates implementation to
 `lex-browser-runtime` so lifecycle, browser actions, case execution, error
 normalization, and future runtime abilities live in one package instead of being
 duplicated inside the skill.
+
+## Default Trigger Scope
+
+Use this skill by default for research and browser automation tasks, even when
+the user does not explicitly say "Lexmount", unless the user asks not to use a
+remote browser or the task can be answered better without opening a browser.
+
+## Research Preset Routing
+
+Use `research ... --preset gov-policy` when the task asks about local policy,
+regional policy, official policy evidence, government portals, government
+websites,政务服务, 政府官网, 政府门户, 官方政策, 地方政策, 各地政策,
+城市政策, 区县政策, 补贴政策, 人才政策, 购房补贴, 社保, 医保, 公积金,
+or business-environment policy. Use `--preset food` for restaurant/local food
+recommendations. Use `--preset web` for general web research that is not better
+served by a specialized preset.
 
 ## First Check
 
@@ -87,18 +103,16 @@ LEX_BROWSER_OBSERVER_URL=http://127.0.0.1:8765 \
 "$SKILL_DIR/scripts/lexmount-browser" research run \
   --query "最好吃的红烧肉" \
   --preset food \
-  --max-sites 5 \
-  --concurrency 5 \
-  --keep-sessions
+  --concurrency 5
 ```
 
 Use plain `research run` without observer only when the user explicitly asks for
 no UI, only artifacts, or a non-interactive run.
 
-One-time prelogin for login-walled research sources:
+One-time prelogin for login-walled custom research sources:
 
 ```bash
-"$SKILL_DIR/scripts/prelogin-auth-contexts" --sources xiaohongshu,zhihu,weibo,douyin
+"$SKILL_DIR/scripts/prelogin-auth-contexts" --sources <source-id>
 ```
 
 The script opens Lexmount browser windows for manual login and saves source
@@ -117,7 +131,11 @@ commands load that file automatically and reuse matching source contexts in
 5. For recommendation, comparison, or evidence-gathering tasks where the user
    asks to use Lexmount Browser, default to the observer research workflow:
    start `observer serve`, open or report `http://127.0.0.1:8765`, set
-   `LEX_BROWSER_OBSERVER_URL`, and run research with kept sessions.
+   `LEX_BROWSER_OBSERVER_URL`, and run research without `--keep-sessions` so
+   completed browser windows are released and removed from the observer page.
+   For `--preset food`, omit `--max-sites` by default so all 13 login-free food
+   sources run. Login-walled sources such as Xiaohongshu, Zhihu, Douyin, Amap,
+   and Weibo are intentionally excluded from the default food preset.
 6. Skip the observer only when the user explicitly asks for no UI, only
    artifacts, or a non-interactive run.
 7. Return or summarize the CLI JSON payloads instead of translating them into
@@ -145,8 +163,8 @@ Recommended flow:
    running.
 2. Open or report `http://127.0.0.1:8765` so the user can watch the run.
 3. Run `research run` with `LEX_BROWSER_OBSERVER_URL=http://127.0.0.1:8765`,
-   `--concurrency 5`, and `--keep-sessions` unless the user or environment
-   calls for different limits.
+   `--concurrency 5`, and no `--keep-sessions` unless the user explicitly wants
+   to keep completed sessions for debugging.
 4. Read the returned `summary.json`, `sources.jsonl`, and `events.jsonl`.
 5. Summarize the answer from the extracted evidence. Mention which sources
    succeeded or failed when it changes confidence.
@@ -160,8 +178,8 @@ Research artifacts:
 
 Auth contexts:
 
-- Run `"$SKILL_DIR/scripts/prelogin-auth-contexts"` once when sources such as
-  Xiaohongshu, Zhihu, Weibo, or Douyin block useful results behind login.
+- Run `"$SKILL_DIR/scripts/prelogin-auth-contexts"` once when a custom source
+  blocks useful results behind login.
 - The saved file is local user state at
   `~/.lex-browser-runtime/auth-contexts.json` by default.
 - `research run` automatically uses matching saved contexts by source id.
@@ -189,14 +207,13 @@ LEX_BROWSER_OBSERVER_URL=http://127.0.0.1:8765 \
 "$SKILL_DIR/scripts/lexmount-browser" research run \
   --query "最好吃的红烧肉" \
   --preset food \
-  --max-sites 5 \
-  --concurrency 5 \
-  --keep-sessions
+  --concurrency 5
 ```
 
-The observer page shows browser inspect windows and run activity. After the run,
-read `summary.json`, `sources.jsonl`, and `events.jsonl`, then write the final
-answer from the extracted evidence. Close kept sessions when the demo is done.
+The observer page shows only live browser inspect windows and run activity.
+Completed sessions are closed and removed from the page. After the run, read
+`summary.json`, `sources.jsonl`, and `events.jsonl`, then write the final answer
+from the extracted evidence. Use `--keep-sessions` only for debugging.
 
 ## Command Map
 
@@ -239,11 +256,23 @@ Research:
 
 ```bash
 "$SKILL_DIR/scripts/lexmount-browser" observer serve --host 127.0.0.1 --port 8765
-"$SKILL_DIR/scripts/prelogin-auth-contexts" --sources xiaohongshu,zhihu,weibo,douyin
+"$SKILL_DIR/scripts/prelogin-auth-contexts" --sources <source-id>
 "$SKILL_DIR/scripts/lexmount-browser" research route --query "最好吃的红烧肉" --preset food
-"$SKILL_DIR/scripts/lexmount-browser" research run --query "最好吃的红烧肉" --preset food --max-sites 10 --concurrency 5
+"$SKILL_DIR/scripts/lexmount-browser" research run --query "最好吃的红烧肉" --preset food --max-sites 13 --concurrency 5
 "$SKILL_DIR/scripts/lexmount-browser" research run --query "best browser automation news" --preset web --max-sites 2
+"$SKILL_DIR/scripts/lexmount-browser" research route --query "深圳 人才补贴政策" --preset gov-policy
+"$SKILL_DIR/scripts/lexmount-browser" research run --query "杭州 购房补贴政策" --preset gov-policy --max-sites 8
 ```
+
+Use `--preset gov-policy` for local government policy research. It routes
+queries through a curated packaged list of 36 major city official government
+portals and opens those portal home pages directly. The package intentionally
+excludes the former 2736 province/city/county all-portal records and the
+non-major-city records from the original 366 city list. The runtime operates
+the portal page's visible search UI when one can be found; the packaged data
+does not assume every portal has a fixed search page URL. It does not fallback
+to external `site:` search. Runtime routing caps `gov-policy` at the available
+major-city portal count and 12 concurrent browser sessions.
 
 Compatibility aliases:
 

@@ -367,7 +367,7 @@ INDEX_HTML = """<!doctype html>
     </aside>
     <section class="workspace">
       <div class="browser-grid" id="browserGrid">
-        <div class="empty">Browser windows will appear here</div>
+        <div class="empty" data-empty="browsers">Browser windows will appear here</div>
       </div>
       <div class="answer" id="answerPanel">
         <div class="answer-header">
@@ -403,6 +403,7 @@ INDEX_HTML = """<!doctype html>
     let currentRunId = null;
     let events = null;
     const browserSlots = new Map();
+    const sessionKeys = new Map();
     let visibleEventCount = 0;
     let latestPoll = null;
 
@@ -465,46 +466,116 @@ INDEX_HTML = """<!doctype html>
       eventList.scrollTop = eventList.scrollHeight;
     }
 
-    function renderBrowsers() {
-      browserGrid.innerHTML = "";
+    function ensureEmptyBrowserState() {
+      const empty = browserGrid.querySelector("[data-empty='browsers']");
       if (!browserSlots.size) {
-        const empty = document.createElement("div");
-        empty.className = "empty";
-        empty.textContent = "Browser windows will appear here";
-        browserGrid.appendChild(empty);
+        if (!empty) {
+          const emptyNode = document.createElement("div");
+          emptyNode.className = "empty";
+          emptyNode.dataset.empty = "browsers";
+          emptyNode.textContent = "Browser windows will appear here";
+          browserGrid.appendChild(emptyNode);
+        }
         return;
       }
-      for (const browser of browserSlots.values()) {
-        const card = document.createElement("article");
-        card.className = "browser-card";
-        const toolbar = document.createElement("div");
-        toolbar.className = "browser-toolbar";
-        const title = document.createElement("div");
-        title.className = "browser-title";
-        title.textContent = `${browser.source_name || browser.source_id} · ${browser.status || "Preparing"}`;
-        toolbar.appendChild(title);
-        if (browser.inspect_url) {
-          const link = document.createElement("a");
-          link.href = browser.inspect_url;
+      if (empty) empty.remove();
+    }
+
+    function createBrowserCard(key) {
+      const card = document.createElement("article");
+      card.className = "browser-card";
+      card.dataset.browserKey = key;
+      const toolbar = document.createElement("div");
+      toolbar.className = "browser-toolbar";
+      const title = document.createElement("div");
+      title.className = "browser-title";
+      toolbar.appendChild(title);
+      card.appendChild(toolbar);
+      browserGrid.appendChild(card);
+      return card;
+    }
+
+    function keyForBrowserEvent(event) {
+      if (event.session_id && sessionKeys.has(event.session_id)) {
+        return sessionKeys.get(event.session_id);
+      }
+      const rawKey = event.source_id || event.session_id || event.rank || "unknown";
+      const key = `${currentRunId || "run"}:${rawKey}`;
+      if (event.session_id) sessionKeys.set(event.session_id, key);
+      return key;
+    }
+
+    function upsertBrowser(key, browser) {
+      const previous = browserSlots.get(key) || {};
+      const next = {
+        ...previous,
+        ...browser,
+        inspect_url: browser.inspect_url || previous.inspect_url,
+      };
+      browserSlots.set(key, next);
+      ensureEmptyBrowserState();
+      const selectorKey = window.CSS && CSS.escape ? CSS.escape(String(key)) : String(key).replace(/"/g, '\\"');
+      const card = browserGrid.querySelector(`[data-browser-key="${selectorKey}"]`) || createBrowserCard(key);
+      const title = card.querySelector(".browser-title");
+      const toolbar = card.querySelector(".browser-toolbar");
+      title.textContent = `${next.source_name || next.source_id} · ${next.status || "Preparing"}`;
+      let link = toolbar.querySelector("a");
+      if (next.inspect_url) {
+        if (!link) {
+          link = document.createElement("a");
           link.target = "_blank";
           link.rel = "noreferrer";
           link.textContent = "Open";
           toolbar.appendChild(link);
         }
-        card.appendChild(toolbar);
-        if (browser.inspect_url) {
-          const frame = document.createElement("iframe");
-          frame.src = browser.inspect_url;
+        link.href = next.inspect_url;
+      } else if (link) {
+        link.remove();
+      }
+      if (next.inspect_url) {
+        let frame = card.querySelector("iframe");
+        if (!frame) {
+          frame = document.createElement("iframe");
           frame.title = title.textContent;
           card.appendChild(frame);
-        } else {
-          const placeholder = document.createElement("div");
+        }
+        if (frame.dataset.inspectUrl !== next.inspect_url) {
+          frame.dataset.inspectUrl = next.inspect_url;
+          frame.src = next.inspect_url;
+        }
+        const placeholder = card.querySelector(".empty");
+        if (placeholder) placeholder.remove();
+      } else {
+        let placeholder = card.querySelector(".empty");
+        const frame = card.querySelector("iframe");
+        if (frame) frame.remove();
+        if (!placeholder) {
+          placeholder = document.createElement("div");
           placeholder.className = "empty";
-          placeholder.textContent = browser.status || "Preparing browser";
           card.appendChild(placeholder);
         }
-        browserGrid.appendChild(card);
+        placeholder.textContent = browser.status || "Preparing browser";
       }
+    }
+
+    function removeBrowser(key) {
+      browserSlots.delete(key);
+      for (const [sessionId, mappedKey] of sessionKeys) {
+        if (mappedKey === key) sessionKeys.delete(sessionId);
+      }
+      const selectorKey = window.CSS && CSS.escape ? CSS.escape(String(key)) : String(key).replace(/"/g, '\\"');
+      const card = browserGrid.querySelector(`[data-browser-key="${selectorKey}"]`);
+      if (card) card.remove();
+      ensureEmptyBrowserState();
+    }
+
+    function clearBrowsers() {
+      browserSlots.clear();
+      sessionKeys.clear();
+      for (const card of browserGrid.querySelectorAll("[data-browser-key]")) {
+        card.remove();
+      }
+      ensureEmptyBrowserState();
     }
 
     function resetAnswer() {
@@ -571,11 +642,10 @@ INDEX_HTML = """<!doctype html>
 
     function resetRun(runId) {
       if (events) events.close();
-      browserSlots.clear();
+      clearBrowsers();
       eventList.innerHTML = "";
       visibleEventCount = 0;
       eventCount.textContent = "0 events";
-      renderBrowsers();
       resetAnswer();
       currentRunId = runId;
       runLabel.textContent = runId;
@@ -585,35 +655,35 @@ INDEX_HTML = """<!doctype html>
         const data = JSON.parse(message.data);
         appendLog(data);
         if (data.type === "research_started" && Array.isArray(data.jobs)) {
-          browserSlots.clear();
           for (const job of data.jobs) {
-            browserSlots.set(job.source_id || job.rank, {
+            upsertBrowser(keyForBrowserEvent(job), {
               ...job,
               status: "Preparing",
             });
           }
-          renderBrowsers();
         }
         if (data.type === "browser_prepared") {
-          const key = data.source_id || data.session_id;
+          const key = keyForBrowserEvent(data);
           const existing = browserSlots.get(key) || {};
-          browserSlots.set(key, {
+          upsertBrowser(key, {
             ...existing,
             ...data,
             inspect_url: existing.inspect_url,
             status: "Login ready",
           });
-          renderBrowsers();
         }
         if (data.type === "browser_created" && data.inspect_url) {
-          const key = data.source_id || data.session_id;
+          const key = keyForBrowserEvent(data);
           const existing = browserSlots.get(key) || {};
-          browserSlots.set(key, {
+          upsertBrowser(key, {
             ...existing,
             ...data,
             status: "Ready",
           });
-          renderBrowsers();
+        }
+        if (data.type === "browser_closed") {
+          const key = keyForBrowserEvent(data);
+          removeBrowser(key);
         }
         if (data.type === "research_finished") {
           setStatus("Finishing");
@@ -667,7 +737,7 @@ INDEX_HTML = """<!doctype html>
       toggleSidebar.textContent = collapsed ? "›" : "‹";
     });
 
-    renderBrowsers();
+    ensureEmptyBrowserState();
     resetAnswer();
     pollLatestRun();
     latestPoll = setInterval(pollLatestRun, 1000);
@@ -707,10 +777,11 @@ class ObserverRun:
         }
 
 
-def format_sse(event: dict[str, Any]) -> str:
+def format_sse(event: dict[str, Any], *, event_id: int | None = None) -> str:
     """Format one JSON event as a Server-Sent Events message."""
 
-    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+    prefix = f"id: {event_id}\n" if event_id is not None else ""
+    return f"{prefix}data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
 def _clip_text(value: Any, *, limit: int = 280) -> str:
@@ -1024,7 +1095,7 @@ class ResearchObserver:
                 max_sites=max_sites,
                 concurrency=concurrency,
                 browser_mode=browser_mode,
-                keep_sessions=True,
+                keep_sessions=False,
                 on_event=lambda event: self._record_event(run, event),
             )
         except Exception as exc:
@@ -1273,15 +1344,21 @@ class ObserverRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.end_headers()
 
-        sent = 0
+        last_event_id = self.headers.get("Last-Event-ID")
+        try:
+            sent = int(last_event_id) + 1 if last_event_id is not None else 0
+        except ValueError:
+            sent = 0
         while True:
             try:
                 state = self.server.observer.get_run(run_id)
                 events = state["events"]
-                for event in events[sent:]:
-                    self.wfile.write(format_sse(event).encode("utf-8"))
+                for index, event in enumerate(events[sent:], start=sent):
+                    self.wfile.write(
+                        format_sse(event, event_id=index).encode("utf-8")
+                    )
                     self.wfile.flush()
-                    sent += 1
+                    sent = index + 1
                 if state["status"] in {"finished", "failed"} and sent >= len(events):
                     return
                 time.sleep(0.1)

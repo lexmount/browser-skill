@@ -28,6 +28,7 @@ include = ["lex_browser_runtime*"]
 
 [tool.setuptools.package-data]
 lex_browser_runtime = [
+    "registry/data/gov_portals.json",
     "registry/data/site_hints.yaml",
     "registry/data/adapters/*.json",
 ]

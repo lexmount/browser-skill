@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,8 +19,14 @@ from lex_browser_runtime.auth_contexts import AuthContextEntry, load_auth_contex
 from lex_browser_runtime.browser.lexmount import LexmountBrowserAdmin
 from lex_browser_runtime.browser.models import BrowserConfigError, BrowserRuntimeError
 from lex_browser_runtime.config import get_default_research_concurrency
+from lex_browser_runtime.registry.gov_portals import (
+    GovPortalRecord,
+    gov_portal_query_terms,
+    load_gov_portals,
+    match_gov_portals,
+)
 
-ResearchPreset = Literal["food", "web"]
+ResearchPreset = Literal["food", "web", "gov-policy"]
 ResearchEventSink = Callable[[dict[str, Any]], None]
 
 
@@ -128,6 +134,14 @@ class AllocatedResearchSession:
     browser_created_emitted: bool = False
 
 
+GOOGLE_SOURCE = ResearchSource(
+    source_id="google",
+    name="Google web",
+    url_template="https://www.google.com/search?q={query}",
+    notes="General global web search.",
+)
+
+
 FOOD_SOURCES: tuple[ResearchSource, ...] = (
     ResearchSource(
         source_id="baidu",
@@ -142,66 +156,81 @@ FOOD_SOURCES: tuple[ResearchSource, ...] = (
         notes="General search fallback.",
     ),
     ResearchSource(
-        source_id="xiaohongshu",
-        name="Xiaohongshu",
-        url_template="https://www.xiaohongshu.com/search_result?keyword={query}",
-        notes="User-generated food recommendations.",
-    ),
-    ResearchSource(
         source_id="bilibili",
         name="Bilibili",
         url_template="https://search.bilibili.com/all?keyword={query}",
         notes="Video results and food creator recommendations.",
     ),
     ResearchSource(
-        source_id="zhihu",
-        name="Zhihu",
-        url_template="https://www.zhihu.com/search?type=content&q={query}",
-        notes="Long-form discussion and local recommendation threads.",
+        source_id="xiangha",
+        name="Xiangha",
+        url_template="https://www.xiangha.com/so/?q=caipu&s={query}",
+        notes="Recipe and ingredient search.",
     ),
     ResearchSource(
-        source_id="douyin",
-        name="Douyin",
-        url_template="https://www.douyin.com/search/{query}",
-        notes="Short-video food discovery surface.",
+        source_id="xiachufang",
+        name="Xiachufang",
+        url_template="https://m-stag-u.xiachufang.com/search/?q={query}",
+        notes="Recipe and home-cooking food discovery.",
     ),
     ResearchSource(
-        source_id="amap",
-        name="Amap",
-        url_template="https://www.amap.com/search?query={query}",
-        notes="Map-local restaurant candidates.",
+        source_id="meishichina",
+        name="Meishichina",
+        url_template="https://home.meishichina.com/search/{query}/",
+        notes="Recipe and Chinese food community search.",
     ),
     ResearchSource(
-        source_id="ctrip",
-        name="Ctrip travel",
-        url_template="https://you.ctrip.com/searchsite/?query={query}",
-        notes="Travel and local guide search.",
+        source_id="lezuocai",
+        name="Lezuocai",
+        url_template="https://www.lezuocai.com/action/search?keyword={query}",
+        notes="Home cooking recipes and step-by-step recipes.",
     ),
     ResearchSource(
-        source_id="mafengwo",
-        name="Mafengwo",
-        url_template="https://www.mafengwo.cn/search/q.php?q={query}",
-        notes="Travel guide and local food notes.",
+        source_id="zidianwang-caipu",
+        name="Zidianwang caipu",
+        url_template="https://www.zidianwang.cn/caipu/?keyword={query}",
+        notes="Simple recipe directory search.",
     ),
     ResearchSource(
-        source_id="weibo",
-        name="Weibo search",
-        url_template="https://s.weibo.com/weibo?q={query}",
-        notes="Recent social discussion.",
+        source_id="jucanw",
+        name="Jucanw",
+        url_template="https://www.baidu.com/s?wd=site%3Awww.jucanw.com%20{query}",
+        notes="Jucanw recipes via public site search.",
     ),
+    ResearchSource(
+        source_id="xiangzuocai",
+        name="Xiangzuocai",
+        url_template="https://www.xiangzuocai.com/search/{query}/",
+        notes="Home cooking, breakfast, baking, and dessert recipes.",
+    ),
+    ResearchSource(
+        source_id="xiao688",
+        name="Xiao688",
+        url_template="https://xiao688.com/search/common.html?word={query}",
+        notes="Home-style recipes, stir-fries, soups, and vegetable recipes.",
+    ),
+    ResearchSource(
+        source_id="hao86-shipu",
+        name="Hao86 shipu",
+        url_template="https://shipu.hao86.com/search/?q={query}",
+        notes="Recipe categories and recipe topic search.",
+    ),
+    GOOGLE_SOURCE,
 )
 
 WEB_SOURCES: tuple[ResearchSource, ...] = (
     FOOD_SOURCES[0],
     FOOD_SOURCES[1],
+    GOOGLE_SOURCE,
 )
-
-
 
 PRESET_SOURCES: dict[str, tuple[ResearchSource, ...]] = {
     "food": FOOD_SOURCES,
     "web": WEB_SOURCES,
 }
+SUPPORTED_RESEARCH_PRESETS = ("food", "gov-policy", "web")
+GOV_POLICY_MAX_SITES = 50
+GOV_POLICY_MAX_CONCURRENCY = 12
 
 
 def research_run_id() -> str:
@@ -221,12 +250,100 @@ def _parse_sites(sites: str | list[str] | tuple[str, ...] | None) -> list[str] |
     return normalized or None
 
 
+def _gov_policy_source_name(record: GovPortalRecord) -> str:
+    label = record.area or record.name
+    return f"{label} policy search"
+
+
+GOV_POLICY_CITY_SCOPE_TERMS = (
+    "全国各大城市",
+    "全国城市",
+    "各大城市",
+    "各城市",
+    "主要城市",
+)
+
+GOV_POLICY_SCOPE_TERMS = GOV_POLICY_CITY_SCOPE_TERMS + (
+    "区县",
+    "县级",
+    "区级",
+    "县级市",
+    "省级",
+    "全省",
+)
+
+
+def _gov_policy_requests_nationwide_city_scope(query: str) -> bool:
+    return any(term in query for term in GOV_POLICY_CITY_SCOPE_TERMS)
+
+
+def _filter_gov_policy_records(
+    *,
+    query: str,
+    records: list[GovPortalRecord],
+) -> list[GovPortalRecord]:
+    if _gov_policy_requests_nationwide_city_scope(query):
+        return list(load_gov_portals())
+    return records
+
+
+def _gov_policy_search_query(record: GovPortalRecord, query: str) -> str:
+    keyword = query
+    for term in GOV_POLICY_SCOPE_TERMS:
+        keyword = keyword.replace(term, " ")
+    for term in sorted(gov_portal_query_terms(record), key=len, reverse=True):
+        keyword = keyword.replace(term, " ")
+    keyword = " ".join(keyword.split())
+    return keyword or query
+
+
+def _route_gov_policy(
+    *,
+    query: str,
+    sites: str | list[str] | tuple[str, ...] | None,
+    max_sites: int,
+) -> ResearchRoute:
+    capped_max_sites = min(max_sites, GOV_POLICY_MAX_SITES)
+    selected_sites = _parse_sites(sites)
+    if selected_sites:
+        by_id = {record.source_id: record for record in load_gov_portals()}
+        unknown = [site for site in selected_sites if site not in by_id]
+        if unknown:
+            raise BrowserConfigError(
+                "Unknown source id(s) for preset 'gov-policy': "
+                + ", ".join(unknown)
+            )
+        records = [by_id[site] for site in selected_sites]
+    else:
+        records = match_gov_portals(query, limit=1000)
+        records = _filter_gov_policy_records(query=query, records=records)
+
+    jobs = [
+        ResearchJob(
+            rank=index + 1,
+            query=_gov_policy_search_query(record, query),
+            preset="gov-policy",
+            source_id=record.source_id,
+            source_name=_gov_policy_source_name(record),
+            source_type="government_portal_search",
+            url=record.url,
+            extraction_goal=(
+                "Open the matched official government portal, use its own search "
+                "interface for the query, and capture policy pages, notices, "
+                "service guides, and eligibility details."
+            ),
+        )
+        for index, record in enumerate(records[:capped_max_sites])
+    ]
+    return ResearchRoute(query=query, preset="gov-policy", jobs=jobs)
+
+
 def route_research(
     *,
     query: str,
     preset: str = "food",
     sites: str | list[str] | tuple[str, ...] | None = None,
-    max_sites: int = 10,
+    max_sites: int = 13,
 ) -> ResearchRoute:
     """Build source-specific browser jobs for a research query."""
 
@@ -236,10 +353,17 @@ def route_research(
     if max_sites <= 0:
         raise BrowserConfigError("max_sites must be greater than 0")
 
+    if preset == "gov-policy":
+        return _route_gov_policy(
+            query=normalized_query,
+            sites=sites,
+            max_sites=max_sites,
+        )
+
     if preset not in PRESET_SOURCES:
         raise BrowserConfigError(
             f"Unknown research preset {preset!r}; supported presets: "
-            + ", ".join(sorted(PRESET_SOURCES))
+            + ", ".join(SUPPORTED_RESEARCH_PRESETS)
         )
 
     sources = list(PRESET_SOURCES[preset])
@@ -297,6 +421,8 @@ def _extract_page_data(
     timeout_ms: float,
     wait_after_ms: float,
     max_chars: int,
+    source_type: str = "search",
+    query: str | None = None,
 ) -> dict[str, Any]:
     try:
         from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
@@ -361,6 +487,15 @@ def _extract_page_data(
             context = browser.contexts[0] if browser.contexts else browser.new_context()
             page = context.pages[-1] if context.pages else context.new_page()
             response = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            original_url = url
+            if source_type == "government_portal_search":
+                _operate_government_portal_search(
+                    page=page,
+                    query=query,
+                    timeout_ms=timeout_ms,
+                    wait_after_ms=wait_after_ms,
+                )
+                response = None
             if wait_after_ms:
                 page.wait_for_timeout(wait_after_ms)
             payload = page.evaluate(
@@ -371,10 +506,252 @@ def _extract_page_data(
                 raise BrowserRuntimeError(
                     "research page extraction returned non-object"
                 )
+            if source_type == "government_portal_search" and not (
+                _government_portal_search_confirmed(
+                    payload=payload,
+                    original_url=original_url,
+                    query=query,
+                )
+            ):
+                raise BrowserRuntimeError(
+                    "government portal search result was not confirmed"
+                )
             payload["status"] = response.status if response else None
             return payload
         finally:
             browser.close()
+
+
+def _operate_government_portal_search(
+    *,
+    page: Any,
+    query: str | None,
+    timeout_ms: float,
+    wait_after_ms: float,
+) -> None:
+    if not query:
+        raise BrowserRuntimeError("government portal search requires a query")
+
+    if _submit_government_portal_search(page=page, query=query):
+        return
+
+    if _open_government_portal_search_entry(page=page):
+        if wait_after_ms:
+            page.wait_for_timeout(wait_after_ms)
+        if _submit_government_portal_search(page=page, query=query):
+            return
+
+    raise BrowserRuntimeError("government portal search input was not found")
+
+
+def _submit_government_portal_search(*, page: Any, query: str) -> bool:
+    script = """
+    ({ query }) => {
+      const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+      const lower = (value) => clean(value).toLowerCase();
+      const visible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && rect.width > 0
+          && rect.height > 0;
+      };
+      const textOf = (element) => [
+        element.getAttribute('placeholder'),
+        element.getAttribute('title'),
+        element.getAttribute('aria-label'),
+        element.getAttribute('name'),
+        element.getAttribute('id'),
+        element.className,
+        element.innerText,
+        element.textContent
+      ].map(clean).join(' ');
+      const looksSearch = (element) => {
+        const text = lower(textOf(element));
+        return text.includes('搜索')
+          || text.includes('检索')
+          || text.includes('search')
+          || text.includes('keyword')
+          || text.includes('query')
+          || text.includes('关键词');
+      };
+      const blockedInputTypes = new Set([
+        'hidden',
+        'submit',
+        'button',
+        'reset',
+        'image',
+        'file',
+        'checkbox',
+        'radio'
+      ]);
+      const editableControls = Array.from(document.querySelectorAll(
+        'input, textarea, [contenteditable=""], [contenteditable="true"]'
+      )).filter((element) => {
+        if (!visible(element)) return false;
+        if (element.disabled || element.readOnly) return false;
+        if (element.tagName.toLowerCase() === 'input') {
+          const type = lower(element.getAttribute('type') || 'text');
+          if (blockedInputTypes.has(type)) return false;
+        }
+        return looksSearch(element);
+      });
+      const input = editableControls[0];
+      if (!input) {
+        return { ok: false, reason: 'no_visible_editable_search_input' };
+      }
+      input.focus();
+      if ('value' in input) {
+        input.value = query;
+      } else {
+        input.textContent = query;
+      }
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+
+      const submitButtons = Array.from(document.querySelectorAll(
+        'button, input[type="submit"], input[type="button"], [role="button"], a'
+      )).filter((element) => visible(element) && looksSearch(element));
+      const form = input.closest('form');
+      if (form) {
+        const formButton = submitButtons.find((button) => form.contains(button));
+        if (formButton) {
+          formButton.click();
+          return { ok: true, method: 'form_button', selector: textOf(input) };
+        }
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit();
+          return { ok: true, method: 'request_submit', selector: textOf(input) };
+        }
+        form.submit();
+        return { ok: true, method: 'form_submit', selector: textOf(input) };
+      }
+
+      const button = submitButtons[0];
+      if (button) {
+        button.click();
+        return { ok: true, method: 'search_button', selector: textOf(input) };
+      }
+      input.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13
+      }));
+      input.dispatchEvent(new KeyboardEvent('keyup', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13
+      }));
+      return { ok: true, method: 'enter_events', selector: textOf(input) };
+    }
+    """
+    result = page.evaluate(script, {"query": query})
+    return isinstance(result, dict) and result.get("ok") is True
+
+
+def _open_government_portal_search_entry(*, page: Any) -> bool:
+    script = """
+    ({ action }) => {
+      const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+      const lower = (value) => clean(value).toLowerCase();
+      const visible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && rect.width > 0
+          && rect.height > 0;
+      };
+      const textOf = (element) => [
+        element.getAttribute('title'),
+        element.getAttribute('aria-label'),
+        element.getAttribute('href'),
+        element.getAttribute('id'),
+        element.className,
+        element.innerText,
+        element.textContent
+      ].map(clean).join(' ');
+      const looksSearch = (element) => {
+        const text = lower(textOf(element));
+        return text.includes('搜索')
+          || text.includes('检索')
+          || text.includes('search')
+          || text.includes('keyword')
+          || text.includes('query')
+          || text.includes('关键词');
+      };
+      const entries = Array.from(document.querySelectorAll(
+        'a, button, input[type="button"], input[type="submit"], [role="button"]'
+      )).filter((element) => visible(element) && looksSearch(element));
+      const entry = entries[0];
+      if (!entry) return { ok: false, reason: 'no_visible_search_entry', action };
+      entry.click();
+      return { ok: true, method: 'entry_click', selector: textOf(entry), action };
+    }
+    """
+    result = page.evaluate(script, {"action": "open_search_entry"})
+    return isinstance(result, dict) and result.get("ok") is True
+
+
+def _government_portal_search_confirmed(
+    *,
+    payload: dict[str, Any],
+    original_url: str,
+    query: str | None,
+) -> bool:
+    final_url = str(payload.get("final_url") or "")
+    original_parts = urlparse(original_url)
+    final_parts = urlparse(final_url)
+    original_location = (
+        original_parts.netloc.lower(),
+        original_parts.path.rstrip("/") or "/",
+        original_parts.params,
+        original_parts.query,
+        original_parts.fragment,
+    )
+    final_location = (
+        final_parts.netloc.lower(),
+        final_parts.path.rstrip("/") or "/",
+        final_parts.params,
+        final_parts.query,
+        final_parts.fragment,
+    )
+    if final_url and final_location != original_location:
+        return True
+
+    search_terms = {
+        "搜索结果",
+        "查询结果",
+        "检索结果",
+        "相关结果",
+    }
+    if query:
+        search_terms.add(query)
+        search_terms.update(part for part in query.split() if len(part) >= 2)
+
+    values: list[str] = []
+    for key in ("title", "text"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    for key in ("headings", "links", "candidates"):
+        items = payload.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, str):
+                values.append(item)
+            elif isinstance(item, dict):
+                values.extend(str(value) for value in item.values() if value)
+    haystack = " ".join(values)
+    return any(term and term in haystack for term in search_terms)
 
 
 def _run_research_job(
@@ -438,6 +815,8 @@ def _run_research_job(
             timeout_ms=timeout_ms,
             wait_after_ms=wait_after_ms,
             max_chars=max_chars,
+            source_type=job.source_type,
+            query=job.query,
         )
         return ResearchJobResult(
             source_id=job.source_id,
@@ -681,7 +1060,7 @@ def run_research(
     query: str,
     preset: str = "food",
     sites: str | list[str] | tuple[str, ...] | None = None,
-    max_sites: int = 10,
+    max_sites: int = 13,
     concurrency: int | None = None,
     output_dir: str | Path | None = None,
     run_id: str | None = None,
@@ -718,6 +1097,8 @@ def run_research(
         sites=sites,
         max_sites=max_sites,
     )
+    if route.preset == "gov-policy":
+        resolved_concurrency = min(resolved_concurrency, GOV_POLICY_MAX_CONCURRENCY)
     auth_context_store = (
         load_auth_context_store(auth_contexts_file)
         if use_auth_contexts

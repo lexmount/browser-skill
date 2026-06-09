@@ -76,7 +76,9 @@ lex-browser-runtime action snapshot --session-id <id>
 lex-browser-runtime case validate --file examples/basic-open.json
 lex-browser-runtime case run --file examples/basic-open.json --stop-on-error
 lex-browser-runtime research route --query "最好吃的红烧肉" --preset food
-lex-browser-runtime research run --query "最好吃的红烧肉" --preset food --max-sites 10 --concurrency 5
+lex-browser-runtime research run --query "最好吃的红烧肉" --preset food --max-sites 13 --concurrency 5
+lex-browser-runtime research route --query "深圳 人才补贴政策" --preset gov-policy
+lex-browser-runtime research run --query "杭州 购房补贴政策" --preset gov-policy --max-sites 8
 ```
 
 The CLI emits structured JSON compatible with the original browser skill helper,
@@ -153,6 +155,16 @@ interpretation, source selection adjustments, and the final answer. The runtime
 runner handles deterministic routing, concurrent Lexmount browser sessions, page
 extraction, and artifact writing. A run returns paths for `routes.json`,
 `events.jsonl`, `sources.jsonl`, and `summary.json`.
+
+For local policy research, use `--preset gov-policy`. It routes the query
+through a curated packaged list of 36 major city official government portals and
+opens those portal home pages directly. The package intentionally excludes the
+former 2736 province/city/county all-portal records and the non-major-city
+records from the original 366 city list. The runtime operates the portal page's
+visible search UI when one can be found; the packaged data does not assume every
+portal has a fixed search page URL. It does not fallback to external `site:`
+search. Runtime routing caps `gov-policy` at the available major-city portal
+count and 12 concurrent browser sessions.
 
 ## npm Installer Release
 
