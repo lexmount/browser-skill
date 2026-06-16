@@ -15,6 +15,9 @@ from lex_browser_runtime.assist import (
     ApiObservation,
     RuntimeAssist,
     RuntimeCompletion,
+    YouTubeFetchedPage,
+    YouTubeSearchBatchAction,
+    YouTubeSearchRequest,
 )
 from lex_browser_runtime.registry import (
     AdapterEndpoint,
@@ -55,6 +58,9 @@ __all__ = [
     "RuntimeAssist",
     "RuntimeActionTrace",
     "RuntimeCompletion",
+    "YouTubeFetchedPage",
+    "YouTubeSearchBatchAction",
+    "YouTubeSearchRequest",
     "ResearchJob",
     "ResearchJobResult",
     "ResearchRoute",
