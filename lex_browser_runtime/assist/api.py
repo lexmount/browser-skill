@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Literal
-from urllib.parse import parse_qs, quote, urljoin, urlsplit
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
 from pydantic import BaseModel, Field
@@ -1289,6 +1289,42 @@ def _youtube_filter_labels(kind: str, value: str) -> list[str]:
     return labels.get(kind, {}).get(value, [])
 
 
+_YOUTUBE_SINGLE_FILTER_SP = {
+    ("sort", "upload_date"): "CAI%3D",
+    ("sort", "view_count"): "CAM%3D",
+    ("sort", "rating"): "CAE%3D",
+    ("upload_date", "last_hour"): "EgIIAQ%3D%3D",
+    ("upload_date", "today"): "EgIIAg%3D%3D",
+    ("upload_date", "this_week"): "EgIIAw%3D%3D",
+    ("upload_date", "this_month"): "EgIIBA%3D%3D",
+    ("upload_date", "this_year"): "EgIIBQ%3D%3D",
+    ("duration", "short"): "EgIYAQ%3D%3D",
+    ("duration", "long"): "EgIYAg%3D%3D",
+}
+
+
+def _youtube_url_has_sp(url: str) -> bool:
+    return bool(parse_qs(urlsplit(url).query).get("sp"))
+
+
+def _youtube_single_filter_url(url: str, kind: str, value: str) -> str | None:
+    sp = _YOUTUBE_SINGLE_FILTER_SP.get((kind, value))
+    if not sp or _youtube_url_has_sp(url):
+        return None
+    parsed = urlsplit(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query["sp"] = [sp]
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query, doseq=True),
+            parsed.fragment,
+        )
+    )
+
+
 def _find_youtube_filter_url(data: Any, labels: list[str]) -> str | None:
     targets = {_normalize_youtube_filter_label(label) for label in labels}
     options = (
@@ -1426,6 +1462,9 @@ async def collect_youtube_search_results(
         )
         if target_url:
             return target_url, "/".join(labels)
+        direct_url = _youtube_single_filter_url(final_url, kind, value)
+        if direct_url:
+            return direct_url, "/".join(labels)
         return final_url, None
 
     results: list[dict[str, Any]] = []

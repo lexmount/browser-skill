@@ -154,6 +154,46 @@ def _youtube_search_html(query: str = "python") -> str:
     return f"<html><script>var ytInitialData = {json.dumps(payload)};</script></html>"
 
 
+def _youtube_search_html_without_filters(video_id: str = "base123") -> str:
+    payload = {
+        "contents": {
+            "twoColumnSearchResultsRenderer": {
+                "primaryContents": {
+                    "sectionListRenderer": {
+                        "contents": [
+                            {
+                                "itemSectionRenderer": {
+                                    "contents": [
+                                        {
+                                            "videoRenderer": {
+                                                "videoId": video_id,
+                                                "title": {
+                                                    "simpleText": f"Video {video_id}"
+                                                },
+                                                "ownerText": {
+                                                    "runs": [{"text": "Channel"}]
+                                                },
+                                                "navigationEndpoint": {
+                                                    "commandMetadata": {
+                                                        "webCommandMetadata": {
+                                                            "url": f"/watch?v={video_id}"
+                                                        }
+                                                    }
+                                                },
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    return f"<html><script>var ytInitialData = {json.dumps(payload)};</script></html>"
+
+
 def test_runtime_assist_compacts_youtube_search_results() -> None:
     url = "https://www.youtube.com/results?search_query=python"
     compact = compact_api_data(url, _youtube_search_html())
@@ -209,6 +249,44 @@ def test_collect_youtube_search_results_batches_and_writes_json() -> None:
         == "Python Tutorial Full Course"
     )
     assert len(fetched_urls) >= 2
+
+
+def test_collect_youtube_search_results_uses_direct_filter_fallback() -> None:
+    fetched_urls: list[str] = []
+
+    async def fetch_page(url: str) -> YouTubeFetchedPage:
+        fetched_urls.append(url)
+        if "sp=CAM%253D" in url:
+            return YouTubeFetchedPage(
+                status=200,
+                url=url,
+                text=_youtube_search_html_without_filters("viewcount123"),
+            )
+        return YouTubeFetchedPage(
+            status=200,
+            url=url,
+            text=_youtube_search_html_without_filters("base123"),
+        )
+
+    result = asyncio.run(
+        collect_youtube_search_results(
+            YouTubeSearchBatchAction(
+                searches=[
+                    YouTubeSearchRequest(
+                        query="javascript tutorial",
+                        limit=1,
+                        sort="view_count",
+                    )
+                ],
+                save_files=False,
+            ),
+            fetch_page,
+        )
+    )
+
+    assert any("sp=CAM%253D" in url for url in fetched_urls)
+    assert result["results"][0]["filtersApplied"] == ["sort=view_count"]
+    assert result["results"][0]["items"][0]["videoId"] == "viewcount123"
 
 
 def test_runtime_assist_compacts_docin_search_results() -> None:
