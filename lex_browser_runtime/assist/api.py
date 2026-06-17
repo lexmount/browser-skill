@@ -17,10 +17,11 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
-from urllib.parse import parse_qs, quote, urljoin, urlsplit
+from typing import Any, Awaitable, Callable, Literal
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -1011,6 +1012,512 @@ def _summarize_bilibili_data(data: Any) -> str | None:
                 chunks.append(f"{label}={value}")
         return "; ".join(chunks)[:4000]
     return None
+
+
+class YouTubeSearchRequest(BaseModel):
+    """One YouTube search request for runtime batch collection."""
+
+    query: str = Field(
+        description='YouTube search query, for example "Python programming tutorial"'
+    )
+    file_name: str | None = Field(
+        default=None,
+        description="Optional JSON filename to save this query result. Defaults to a sanitized query-based name.",
+    )
+    limit: int = Field(
+        default=10,
+        ge=1,
+        le=50,
+        description="Number of video results to collect for this query",
+    )
+    sort: Literal["relevance", "upload_date", "view_count", "rating"] = Field(
+        default="relevance",
+        description="YouTube search sort order. Use view_count for popularity/view-count tasks.",
+    )
+    upload_date: Literal[
+        "any", "last_hour", "today", "this_week", "this_month", "this_year"
+    ] = Field(
+        default="any",
+        description="YouTube upload date filter.",
+    )
+    duration: Literal["any", "short", "medium", "long"] = Field(
+        default="any",
+        description="YouTube duration filter: short <4 minutes, medium 4-20 minutes, long >20 minutes.",
+    )
+
+
+class YouTubeSearchBatchAction(BaseModel):
+    """Batch YouTube search action schema for browser agents."""
+
+    searches: list[YouTubeSearchRequest] = Field(
+        min_length=1,
+        max_length=20,
+        description="Batch of YouTube searches to collect and save. Use one action for multi-topic/multi-category tasks.",
+    )
+    save_files: bool = Field(
+        default=True, description="Write one JSON file per search result batch"
+    )
+
+
+@dataclass(frozen=True)
+class YouTubeFetchedPage:
+    """Fetched YouTube search page returned by an upper-layer browser callback."""
+
+    status: int
+    url: str
+    text: str
+
+
+YouTubePageFetcher = Callable[
+    [str], Awaitable[YouTubeFetchedPage | tuple[int, str, str] | dict[str, Any]]
+]
+YouTubeJsonWriter = Callable[[str, str], Awaitable[str]]
+
+
+def _extract_balanced_json_object(text: str, start: int) -> Any | None:
+    """Extract a JSON object from text starting at or before the opening brace."""
+
+    brace_start = text.find("{", start)
+    if brace_start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(brace_start, len(text)):
+        char = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                raw = text[brace_start : index + 1]
+                try:
+                    return json.loads(raw)
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _extract_youtube_initial_data_from_html(value: str) -> dict[str, Any] | None:
+    for marker in (
+        "ytInitialData =",
+        "var ytInitialData =",
+        'window["ytInitialData"] =',
+    ):
+        start = value.find(marker)
+        if start >= 0:
+            payload = _extract_balanced_json_object(value, start + len(marker))
+            return payload if isinstance(payload, dict) else None
+    return None
+
+
+def _youtube_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return _compact_api_text(value, max_length=300)
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, list):
+        parts = [_youtube_text(item) for item in value]
+        return _compact_api_text(
+            "".join(part for part in parts if part), max_length=300
+        )
+    if not isinstance(value, dict):
+        return None
+    for key in ("simpleText", "text", "label"):
+        text = value.get(key)
+        if isinstance(text, str) and text.strip():
+            return _compact_api_text(text, max_length=300)
+    runs = value.get("runs")
+    if isinstance(runs, list):
+        parts = []
+        for run in runs:
+            if isinstance(run, dict) and isinstance(run.get("text"), str):
+                parts.append(run["text"])
+        if parts:
+            return _compact_api_text("".join(parts), max_length=300)
+    accessibility = value.get("accessibility") or value.get("accessibilityData")
+    if isinstance(accessibility, dict):
+        return _youtube_text(accessibility.get("accessibilityData") or accessibility)
+    return None
+
+
+def _youtube_endpoint_url(endpoint: Any) -> str | None:
+    if not isinstance(endpoint, dict):
+        return None
+    command = endpoint.get("commandMetadata")
+    if isinstance(command, dict):
+        web = command.get("webCommandMetadata")
+        if isinstance(web, dict) and isinstance(web.get("url"), str):
+            return web["url"]
+    url_endpoint = endpoint.get("urlEndpoint")
+    if isinstance(url_endpoint, dict) and isinstance(url_endpoint.get("url"), str):
+        return url_endpoint["url"]
+    watch = endpoint.get("watchEndpoint")
+    if isinstance(watch, dict) and isinstance(watch.get("videoId"), str):
+        return f"/watch?v={watch['videoId']}"
+    return None
+
+
+def _iter_json_dicts(value: Any):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _iter_json_dicts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _iter_json_dicts(child)
+
+
+def _compact_youtube_video_renderer(renderer: dict[str, Any]) -> dict[str, Any] | None:
+    video_id = renderer.get("videoId")
+    if not isinstance(video_id, str) or not video_id:
+        return None
+    title = _youtube_text(renderer.get("title"))
+    if not title:
+        return None
+    endpoint_url = _youtube_endpoint_url(renderer.get("navigationEndpoint"))
+    url = (
+        urljoin("https://www.youtube.com", endpoint_url)
+        if endpoint_url
+        else f"https://www.youtube.com/watch?v={video_id}"
+    )
+    item: dict[str, Any] = {"videoId": video_id, "title": title, "url": url}
+    for target, source in (
+        ("channel", "ownerText"),
+        ("channel", "longBylineText"),
+        ("views", "viewCountText"),
+        ("published", "publishedTimeText"),
+        ("duration", "lengthText"),
+        ("description", "descriptionSnippet"),
+    ):
+        if target in item:
+            continue
+        text = _youtube_text(renderer.get(source))
+        if text:
+            item[target] = text
+    return item
+
+
+def _extract_youtube_video_items(data: Any, limit: int = 50) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for node in _iter_json_dicts(data):
+        renderer = node.get("videoRenderer")
+        if not isinstance(renderer, dict):
+            continue
+        item = _compact_youtube_video_renderer(renderer)
+        if not item:
+            continue
+        video_id = str(item.get("videoId") or "")
+        if video_id in seen:
+            continue
+        seen.add(video_id)
+        items.append(item)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _extract_youtube_filter_options(data: Any) -> list[dict[str, str]]:
+    options: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for node in _iter_json_dicts(data):
+        renderer = node.get("searchFilterRenderer")
+        if not isinstance(renderer, dict):
+            continue
+        label = _youtube_text(
+            renderer.get("label") or renderer.get("tooltip") or renderer.get("title")
+        )
+        endpoint_url = _youtube_endpoint_url(renderer.get("navigationEndpoint"))
+        if not label or not endpoint_url:
+            continue
+        absolute_url = urljoin("https://www.youtube.com", endpoint_url)
+        key = (label.lower(), absolute_url)
+        if key in seen:
+            continue
+        seen.add(key)
+        option = {"label": label, "url": absolute_url}
+        status = renderer.get("status")
+        if isinstance(status, str) and status:
+            option["status"] = status
+        options.append(option)
+    return options
+
+
+def _normalize_youtube_filter_label(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _youtube_filter_labels(kind: str, value: str) -> list[str]:
+    labels = {
+        "sort": {
+            "upload_date": ["Upload date"],
+            "view_count": ["View count"],
+            "rating": ["Rating"],
+            "relevance": ["Relevance"],
+        },
+        "upload_date": {
+            "last_hour": ["Last hour"],
+            "today": ["Today"],
+            "this_week": ["This week"],
+            "this_month": ["This month"],
+            "this_year": ["This year"],
+        },
+        "duration": {
+            "short": ["Under 4 minutes", "Short (< 4 minutes)", "Short"],
+            "medium": [
+                "4 - 20 minutes",
+                "4-20 minutes",
+                "Medium (4 - 20 minutes)",
+                "Medium",
+            ],
+            "long": ["Over 20 minutes", "Long (> 20 minutes)", "Long"],
+        },
+    }
+    return labels.get(kind, {}).get(value, [])
+
+
+_YOUTUBE_SINGLE_FILTER_SP = {
+    ("sort", "upload_date"): "CAI%3D",
+    ("sort", "view_count"): "CAM%3D",
+    ("sort", "rating"): "CAE%3D",
+    ("upload_date", "last_hour"): "EgIIAQ%3D%3D",
+    ("upload_date", "today"): "EgIIAg%3D%3D",
+    ("upload_date", "this_week"): "EgIIAw%3D%3D",
+    ("upload_date", "this_month"): "EgIIBA%3D%3D",
+    ("upload_date", "this_year"): "EgIIBQ%3D%3D",
+    ("duration", "short"): "EgIYAQ%3D%3D",
+    ("duration", "long"): "EgIYAg%3D%3D",
+}
+
+
+def _youtube_url_has_sp(url: str) -> bool:
+    return bool(parse_qs(urlsplit(url).query).get("sp"))
+
+
+def _youtube_single_filter_url(url: str, kind: str, value: str) -> str | None:
+    sp = _YOUTUBE_SINGLE_FILTER_SP.get((kind, value))
+    if not sp or _youtube_url_has_sp(url):
+        return None
+    parsed = urlsplit(url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query["sp"] = [sp]
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query, doseq=True),
+            parsed.fragment,
+        )
+    )
+
+
+def _find_youtube_filter_url(data: Any, labels: list[str]) -> str | None:
+    targets = {_normalize_youtube_filter_label(label) for label in labels}
+    options = (
+        data.get("filterOptions")
+        if isinstance(data, dict) and isinstance(data.get("filterOptions"), list)
+        else None
+    )
+    if options is None:
+        options = _extract_youtube_filter_options(data)
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        label = option.get("label")
+        url = option.get("url")
+        if (
+            isinstance(label, str)
+            and isinstance(url, str)
+            and _normalize_youtube_filter_label(label) in targets
+        ):
+            return url
+    return None
+
+
+def _youtube_search_url(query: str) -> str:
+    return f"https://www.youtube.com/results?search_query={quote(query, safe='')}"
+
+
+def _is_youtube_search_url(url: str) -> bool:
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").lower()
+    return host.endswith("youtube.com") and parsed.path == "/results"
+
+
+def _compact_youtube_search_data(url: str, data: Any) -> dict[str, Any] | None:
+    """Compact YouTube search HTML/ytInitialData into stable video cards and filter links."""
+
+    if not _is_youtube_search_url(url):
+        return None
+    if isinstance(data, str):
+        data = _extract_youtube_initial_data_from_html(data)
+    if not isinstance(data, dict):
+        return None
+    items = _extract_youtube_video_items(data, limit=50)
+    if not items:
+        return None
+    query = parse_qs(urlsplit(url).query)
+    return {
+        "youtubeSearchResults": True,
+        "query": (query.get("search_query") or [""])[0],
+        "sp": (query.get("sp") or [""])[0],
+        "count": len(items),
+        "items": items,
+        "filterOptions": _extract_youtube_filter_options(data)[:40],
+    }
+
+
+def _summarize_youtube_search_data(data: Any) -> str | None:
+    if not isinstance(data, dict) or not data.get("youtubeSearchResults"):
+        return None
+    chunks = ["youtube_search"]
+    for label, key in (("query", "query"), ("count", "count")):
+        value = data.get(key)
+        if value not in (None, ""):
+            chunks.append(f"{label}={value}")
+    items = []
+    for index, item in enumerate(data.get("items") or [], 1):
+        if not isinstance(item, dict):
+            continue
+        parts = [f"#{index}"]
+        for label, key in (
+            ("id", "videoId"),
+            ("title", "title"),
+            ("channel", "channel"),
+            ("views", "views"),
+            ("published", "published"),
+            ("duration", "duration"),
+            ("url", "url"),
+        ):
+            value = item.get(key)
+            if value not in (None, ""):
+                parts.append(f"{label}={value}")
+        items.append("; ".join(parts))
+        if len(items) >= 10:
+            break
+    if items:
+        chunks.append("items: " + " | ".join(items))
+    return "; ".join(chunks)[:4000]
+
+
+def _coerce_youtube_fetched_page(
+    value: YouTubeFetchedPage | tuple[int, str, str] | dict[str, Any],
+    requested_url: str,
+) -> YouTubeFetchedPage:
+    if isinstance(value, YouTubeFetchedPage):
+        return value
+    if isinstance(value, tuple) and len(value) == 3:
+        status, final_url, text = value
+        return YouTubeFetchedPage(
+            status=int(status or 0),
+            url=str(final_url or requested_url),
+            text=str(text or ""),
+        )
+    if isinstance(value, dict):
+        return YouTubeFetchedPage(
+            status=int(value.get("status") or 0),
+            url=str(value.get("url") or requested_url),
+            text=str(value.get("text") or ""),
+        )
+    return YouTubeFetchedPage(status=0, url=requested_url, text="")
+
+
+async def collect_youtube_search_results(
+    params: YouTubeSearchBatchAction,
+    fetch_page: YouTubePageFetcher,
+    write_json_file: YouTubeJsonWriter | None = None,
+) -> dict[str, Any]:
+    """Collect YouTube search pages in batch using caller-provided browser/file callbacks."""
+
+    async def fetch_search_page(url: str) -> tuple[int, str, dict[str, Any] | None]:
+        fetched = _coerce_youtube_fetched_page(await fetch_page(url), url)
+        compact = _compact_youtube_search_data(fetched.url, fetched.text)
+        return fetched.status, fetched.url, compact
+
+    async def apply_filter(url: str, kind: str, value: str) -> tuple[str, str | None]:
+        if value in ("", "any", "relevance"):
+            return url, None
+        labels = _youtube_filter_labels(kind, value)
+        if not labels:
+            return url, None
+        _status, final_url, compact = await fetch_search_page(url)
+        if not compact:
+            return final_url, None
+        target_url = _find_youtube_filter_url(
+            {"filterOptions": compact.get("filterOptions", [])}, labels
+        )
+        if target_url:
+            return target_url, "/".join(labels)
+        direct_url = _youtube_single_filter_url(final_url, kind, value)
+        if direct_url:
+            return direct_url, "/".join(labels)
+        return final_url, None
+
+    results: list[dict[str, Any]] = []
+    written_files: list[str] = []
+    for request in params.searches:
+        search_url = _youtube_search_url(request.query)
+        applied_filters: list[str] = []
+        for kind, value in (
+            ("upload_date", request.upload_date),
+            ("duration", request.duration),
+            ("sort", request.sort),
+        ):
+            next_url, applied = await apply_filter(search_url, kind, value)
+            search_url = next_url
+            if applied:
+                applied_filters.append(f"{kind}={value}")
+        status, final_url, compact = await fetch_search_page(search_url)
+        items = (compact or {}).get("items") if isinstance(compact, dict) else []
+        if not isinstance(items, list):
+            items = []
+        limited_items = items[: request.limit]
+        payload = {
+            "query": request.query,
+            "requested": {
+                "limit": request.limit,
+                "sort": request.sort,
+                "upload_date": request.upload_date,
+                "duration": request.duration,
+            },
+            "url": final_url,
+            "status": status,
+            "filtersApplied": applied_filters,
+            "count": len(limited_items),
+            "items": limited_items,
+        }
+        file_name = request.file_name
+        if not file_name:
+            base = (
+                re.sub(r"[^A-Za-z0-9_-]+", "_", request.query.strip())
+                .strip("_")
+                .lower()
+                or "youtube"
+            )
+            file_name = f"{base}_youtube_results.json"
+        saved_file_name: str | None = None
+        if params.save_files and write_json_file is not None:
+            saved_file_name = await write_json_file(
+                file_name, json.dumps(payload, ensure_ascii=False, indent=2)
+            )
+            written_files.append(saved_file_name)
+        results.append({**payload, "fileName": saved_file_name})
+
+    return {"youtubeSearchBatch": True, "savedFiles": written_files, "results": results}
 
 
 def _is_suning_review_satisfy_url(url: str) -> bool:
@@ -4412,6 +4919,12 @@ def _summarize_gamespot_review_data(data: Any) -> str | None:
 def _summarize_api_data(url: str, data: Any, method: str = "GET") -> str:
     """Create a compact memory line so API results are not lost in flash mode."""
 
+    youtube_summary = _summarize_youtube_search_data(data)
+    if youtube_summary:
+        return f"Called API {method.upper()} {urlsplit(url).path or url} ; {youtube_summary}"[
+            :4000
+        ]
+
     bilibili_summary = _summarize_bilibili_data(data)
     if bilibili_summary:
         return f"Called API {method.upper()} {urlsplit(url).path or url} ; {bilibili_summary}"[
@@ -4661,6 +5174,7 @@ def _is_known_runtime_compact_api_data(data: Any) -> bool:
     if not isinstance(data, dict):
         return False
     for flag in (
+        "youtubeSearchResults",
         "bilibiliVideoSearch",
         "bilibiliVideoDetail",
         "suningReviewSatisfy",
@@ -4729,6 +5243,7 @@ def compact_api_data(url: str, data: Any) -> Any:
     """Return known compact data for a URL/response, or the original data."""
 
     compactors = (
+        _compact_youtube_search_data,
         _compact_cqvip_search_data,
         _compact_academia_profile_works_data,
         _compact_academia_views_data,
@@ -4847,6 +5362,12 @@ _BROWSER_USE_SERVICE_COMPAT_PRIVATE_NAMES = (
     "_compact_bilibili_video_item",
     "_compact_bilibili_data",
     "_summarize_bilibili_data",
+    "YouTubeSearchRequest",
+    "YouTubeSearchBatchAction",
+    "YouTubeFetchedPage",
+    "collect_youtube_search_results",
+    "_compact_youtube_search_data",
+    "_summarize_youtube_search_data",
     "_is_suning_review_satisfy_url",
     "_compact_suning_review_data",
     "_summarize_suning_review_data",

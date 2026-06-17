@@ -6,8 +6,12 @@ from typing import Any
 
 from lex_browser_runtime.assist.api import (
     ApiObservation,
+    YouTubeJsonWriter,
+    YouTubePageFetcher,
+    YouTubeSearchBatchAction,
     build_api_observation,
     compact_api_data,
+    collect_youtube_search_results,
     fetch_api_via_http,
     normalize_request_body,
     prune_api_data,
@@ -67,6 +71,16 @@ class RuntimeAssist:
         """Build a compact observation for LLM handoff."""
 
         return build_api_observation(url, data, method=method, ok=ok, status=status)
+
+    async def collect_youtube_search_results(
+        self,
+        params: YouTubeSearchBatchAction,
+        fetch_page: YouTubePageFetcher,
+        write_json_file: YouTubeJsonWriter | None = None,
+    ) -> dict[str, Any]:
+        """Collect YouTube search pages with caller-provided browser/file callbacks."""
+
+        return await collect_youtube_search_results(params, fetch_page, write_json_file)
 
     def has_answerable_runtime_state(self, metadata: dict[str, Any] | None) -> bool:
         """Return whether action metadata can skip a fresh DOM observe."""
