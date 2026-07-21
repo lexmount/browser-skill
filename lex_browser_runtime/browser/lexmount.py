@@ -40,6 +40,9 @@ class LexmountSessionRecord(BaseModel):
     status: str | None = None
     browser_mode: str | None = None
     project_id: str | None = None
+    context_id: str | None = None
+    context_description: str | None = None
+    context_display_name: str | None = None
     created_at: Any | None = None
     inspect_url: str | None = None
     inspect_url_dbg: str | None = None
@@ -52,6 +55,8 @@ class LexmountContextRecord(BaseModel):
 
     context_id: str | None = None
     status: str | None = None
+    description: str | None = None
+    display_name: str | None = None
     created_at: Any | None = None
     updated_at: Any | None = None
     metadata: dict[str, Any] | None = None
@@ -319,6 +324,9 @@ def serialize_session(session: Any) -> LexmountSessionRecord:
         status=getattr(session, "status", None),
         browser_mode=getattr(session, "browser_type", None),
         project_id=getattr(session, "project_id", None),
+        context_id=getattr(session, "context_id", None),
+        context_description=getattr(session, "context_description", None),
+        context_display_name=getattr(session, "context_display_name", None),
         created_at=getattr(session, "created_at", None),
         inspect_url=getattr(session, "inspect_url", None),
         inspect_url_dbg=getattr(session, "inspect_url_dbg", None),
@@ -334,6 +342,8 @@ def serialize_context(context: Any) -> LexmountContextRecord:
     return LexmountContextRecord(
         context_id=getattr(context, "id", None),
         status=getattr(context, "status", None),
+        description=getattr(context, "description", None),
+        display_name=getattr(context, "display_name", None),
         created_at=getattr(context, "created_at", None),
         updated_at=getattr(context, "updated_at", None),
         metadata=getattr(context, "metadata", None),
@@ -400,6 +410,7 @@ class LexmountBrowserAdmin:
         context_mode: str = "read_write",
         browser_mode: str = "normal",
         metadata: dict[str, Any] | None = None,
+        context_description: str | None = None,
     ) -> SessionCreateResult:
         """Create a Lexmount session, optionally creating or reusing a context."""
 
@@ -407,7 +418,11 @@ class LexmountBrowserAdmin:
         resolved_context_id = context_id
         try:
             if create_context and not resolved_context_id:
-                context = self.client.contexts.create(metadata=metadata)
+                context = _call_with_optional_kwargs(
+                    self.client.contexts.create,
+                    metadata=metadata,
+                    description=context_description,
+                )
                 resolved_context_id = str(context.id)
                 created_context = True
 
@@ -566,11 +581,16 @@ class LexmountBrowserAdmin:
         self,
         *,
         metadata: dict[str, Any] | None = None,
+        description: str | None = None,
     ) -> LexmountContextRecord:
         """Create a persistent Lexmount browser context."""
 
         try:
-            context = self.client.contexts.create(metadata=metadata)
+            context = _call_with_optional_kwargs(
+                self.client.contexts.create,
+                metadata=metadata,
+                description=description,
+            )
         except Exception as exc:
             raise_normalized_lexmount_error(exc)
         return serialize_context(context)
