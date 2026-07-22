@@ -1,1 +1,1 @@
-lex-browser-runtime[skill] @ git+https://github.com/lexmount/browser-skill.git@v0.2.4
+lex-browser-runtime[skill] @ git+https://github.com/lexmount/browser-skill.git@v0.2.5
