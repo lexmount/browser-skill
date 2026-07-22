@@ -55,6 +55,11 @@ class LexmountContextRecord(BaseModel):
     created_at: Any | None = None
     updated_at: Any | None = None
     metadata: dict[str, Any] | None = None
+    region_id: str | None = None
+    regionId: str | None = None
+    description: str | None = None
+    display_name: str | None = None
+    displayName: str | None = None
 
 
 class LexmountErrorInfo(BaseModel):
@@ -331,12 +336,25 @@ def serialize_session(session: Any) -> LexmountSessionRecord:
 def serialize_context(context: Any) -> LexmountContextRecord:
     """Serialize a Lexmount SDK context object into a stable model."""
 
+    context_id = getattr(context, "id", None) or getattr(context, "context_id", None)
+    region_id = getattr(context, "region_id", None) or getattr(context, "regionId", None)
+    display_name = (
+        getattr(context, "display_name", None)
+        or getattr(context, "displayName", None)
+        or getattr(context, "description", None)
+        or context_id
+    )
     return LexmountContextRecord(
-        context_id=getattr(context, "id", None),
+        context_id=context_id,
         status=getattr(context, "status", None),
         created_at=getattr(context, "created_at", None),
         updated_at=getattr(context, "updated_at", None),
         metadata=getattr(context, "metadata", None),
+        region_id=region_id,
+        regionId=region_id,
+        description=getattr(context, "description", None),
+        display_name=display_name,
+        displayName=display_name,
     )
 
 
@@ -566,11 +584,15 @@ class LexmountBrowserAdmin:
         self,
         *,
         metadata: dict[str, Any] | None = None,
+        description: str | None = None,
     ) -> LexmountContextRecord:
         """Create a persistent Lexmount browser context."""
 
         try:
-            context = self.client.contexts.create(metadata=metadata)
+            kwargs: dict[str, Any] = {"metadata": metadata}
+            if description is not None:
+                kwargs["description"] = description
+            context = self.client.contexts.create(**kwargs)
         except Exception as exc:
             raise_normalized_lexmount_error(exc)
         return serialize_context(context)

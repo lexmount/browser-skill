@@ -190,7 +190,10 @@ def cmd_session_keepalive(args: argparse.Namespace) -> None:
 def cmd_context_create(args: argparse.Namespace) -> None:
     command = "context.create"
     try:
-        context = LexmountBrowserAdmin().create_context(metadata=args.metadata)
+        context = LexmountBrowserAdmin().create_context(
+            metadata=args.metadata,
+            description=args.description,
+        )
     except Exception as exc:
         _failure_from_exception(command, exc)
     _success(command, context=_model_payload(context))
@@ -529,6 +532,10 @@ def build_parser() -> argparse.ArgumentParser:
         dest="metadata",
         type=_parse_metadata_json,
         help="JSON object sent as context metadata",
+    )
+    context_create.add_argument(
+        "--description",
+        help="Optional human-readable context description",
     )
     context_create.set_defaults(func=cmd_context_create)
 

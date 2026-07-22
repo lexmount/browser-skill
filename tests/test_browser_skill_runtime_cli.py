@@ -50,10 +50,15 @@ class _FakeSession:
 
 class _FakeContext:
     id = "context_123"
+    region_id = "nanjing-1"
+    regionId = "nanjing-1"
     status = "available"
     created_at = "2026-05-20T00:00:00Z"
     updated_at = "2026-05-20T00:00:01Z"
     metadata = {"owner": "test"}
+    description = "Nanjing login context"
+    display_name = "Nanjing login context"
+    displayName = "Nanjing login context"
 
 
 class _FakeSessions:
@@ -88,8 +93,15 @@ class _FakeContexts:
         self.created: list[dict[str, Any]] = []
         self.deleted: list[str] = []
 
-    def create(self, metadata: dict[str, Any] | None = None) -> _FakeContext:
-        self.created.append({"metadata": metadata})
+    def create(
+        self,
+        metadata: dict[str, Any] | None = None,
+        description: str | None = None,
+    ) -> _FakeContext:
+        payload: dict[str, Any] = {"metadata": metadata}
+        if description is not None:
+            payload["description"] = description
+        self.created.append(payload)
         return _FakeContext()
 
     def list(self, status: str | None = None, limit: int | None = None) -> list[Any]:
@@ -197,6 +209,44 @@ def test_admin_session_create_cleans_new_context_on_session_failure() -> None:
 
     assert client.contexts.created == [{"metadata": {"owner": "test"}}]
     assert client.contexts.deleted == ["context_123"]
+
+
+def test_admin_context_list_preserves_description_and_region_fields() -> None:
+    client = _FakeClient()
+    admin = LexmountBrowserAdmin(client)
+
+    result = admin.list_contexts()
+    payload = result.model_dump(mode="json")
+
+    assert payload["contexts"] == [
+        {
+            "context_id": "context_123",
+            "status": "available",
+            "created_at": "2026-05-20T00:00:00Z",
+            "updated_at": "2026-05-20T00:00:01Z",
+            "metadata": {"owner": "test"},
+            "region_id": "nanjing-1",
+            "regionId": "nanjing-1",
+            "description": "Nanjing login context",
+            "display_name": "Nanjing login context",
+            "displayName": "Nanjing login context",
+        }
+    ]
+
+
+def test_admin_context_create_forwards_description() -> None:
+    client = _FakeClient()
+    admin = LexmountBrowserAdmin(client)
+
+    context = admin.create_context(
+        metadata={"owner": "test"},
+        description="Reusable login state",
+    )
+
+    assert client.contexts.created == [
+        {"metadata": {"owner": "test"}, "description": "Reusable login state"}
+    ]
+    assert context.description == "Nanjing login context"
 
 
 def test_admin_get_session_searches_paginated_results() -> None:
