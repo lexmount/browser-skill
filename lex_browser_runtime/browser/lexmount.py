@@ -418,6 +418,8 @@ class LexmountBrowserAdmin:
         context_mode: str = "read_write",
         browser_mode: str = "normal",
         metadata: dict[str, Any] | None = None,
+        downloads: dict[str, bool] | None = None,
+        recording: dict[str, bool] | None = None,
     ) -> SessionCreateResult:
         """Create a Lexmount session, optionally creating or reusing a context."""
 
@@ -435,6 +437,10 @@ class LexmountBrowserAdmin:
                     "id": resolved_context_id,
                     "mode": context_mode,
                 }
+            if downloads is not None:
+                session_kwargs["downloads"] = downloads
+            if recording is not None:
+                session_kwargs["recording"] = recording
             try:
                 session = self.client.sessions.create(**session_kwargs)
             except Exception as exc:

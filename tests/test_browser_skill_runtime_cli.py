@@ -194,6 +194,51 @@ def test_admin_session_create_matches_browser_skill_context_flow() -> None:
     )
 
 
+def test_admin_session_create_passes_media_storage_options() -> None:
+    client = _FakeClient()
+    admin = LexmountBrowserAdmin(client)
+
+    admin.create_session(
+        browser_mode="normal",
+        downloads={"enabled": True},
+        recording={"persistent": True},
+    )
+
+    assert client.sessions.created == [
+        {
+            "browser_mode": "normal",
+            "downloads": {"enabled": True},
+            "recording": {"persistent": True},
+        }
+    ]
+
+
+def test_cli_session_create_passes_media_storage_options(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = _FakeClient()
+    monkeypatch.setattr(
+        "lex_browser_runtime.cli.LexmountBrowserAdmin",
+        lambda: LexmountBrowserAdmin(client),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main(["session", "create", "--enable-downloads", "--enable-recording"])
+
+    assert exc_info.value.code == 0
+    assert client.sessions.created == [
+        {
+            "browser_mode": "normal",
+            "downloads": {"enabled": True},
+            "recording": {"persistent": True},
+        }
+    ]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["command"] == "session.create"
+
+
 def test_admin_session_create_cleans_new_context_on_session_failure() -> None:
     class FailingSessions(_FakeSessions):
         def create(self, **kwargs: Any) -> _FakeSession:

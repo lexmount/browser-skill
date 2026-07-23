@@ -198,6 +198,10 @@ class LexmountBackend:
             }
             if context is not None:
                 create_kwargs["context"] = context
+            if request.downloads_enabled:
+                create_kwargs["downloads"] = {"enabled": True}
+            if request.recording_persistent:
+                create_kwargs["recording"] = {"persistent": True}
             optional_params = {
                 "extension_ids": request.extension_ids,
                 "proxy": proxy,

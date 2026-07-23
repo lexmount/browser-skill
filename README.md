@@ -65,6 +65,8 @@ Common commands:
 
 ```bash
 lex-browser-runtime session create
+lex-browser-runtime session create --enable-downloads
+lex-browser-runtime session create --enable-recording
 lex-browser-runtime session create --create-context --metadata-json '{"owner":"demo"}'
 lex-browser-runtime session list --status active
 lex-browser-runtime session get --session-id <id>

@@ -42,6 +42,14 @@ class CreateBrowserRequest(BaseModel):
         alias="lexmount_extension_ids",
     )
     proxy: dict[str, Any] | None = Field(default=None, alias="lexmount_proxy")
+    downloads_enabled: bool = Field(
+        default=False,
+        alias="lexmount_downloads_enabled",
+    )
+    recording_persistent: bool = Field(
+        default=False,
+        alias="lexmount_recording_persistent",
+    )
     weak_lock: bool = Field(default=False, alias="lexmount_weak_lock")
     async_create: bool = Field(default=True, alias="lexmount_async_create")
     poll_interval_sec: float = Field(
@@ -68,6 +76,16 @@ class CreateBrowserRequest(BaseModel):
                 "verify_ssl": os.getenv("LEXMOUNT_VERIFY_SSL", "true").lower()
                 not in {"0", "false", "no"},
                 "browser_mode": os.getenv("LEXMOUNT_BROWSER_MODE") or "normal",
+                "downloads_enabled": os.getenv(
+                    "LEXMOUNT_DOWNLOADS_ENABLED",
+                    "false",
+                ).lower()
+                in {"1", "true", "yes"},
+                "recording_persistent": os.getenv(
+                    "LEXMOUNT_RECORDING_PERSISTENT",
+                    "false",
+                ).lower()
+                in {"1", "true", "yes"},
             }
         )
 

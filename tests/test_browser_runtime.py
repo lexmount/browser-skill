@@ -199,6 +199,32 @@ def test_lexmount_backend_forks_context_and_normalizes_session(
     assert state["client_close_calls"] == 1
 
 
+def test_lexmount_backend_passes_media_storage_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _install_fake_lexmount(monkeypatch)
+    backend = LexmountBackend()
+
+    session = asyncio.run(
+        backend.create_browser(
+            CreateBrowserRequest(
+                lexmount_downloads_enabled=True,
+                lexmount_recording_persistent=True,
+            )
+        )
+    )
+
+    assert state["create_calls"][0]["downloads"] == {"enabled": True}
+    assert state["create_calls"][0]["recording"] == {"persistent": True}
+
+    asyncio.run(backend.close_browser(session.id))
+
+    assert state["session_close_calls"] == 1
+    assert state["session_delete_calls"] == ["session_123"]
+    assert state["context_delete_calls"] == []
+    assert state["client_close_calls"] == 1
+
+
 def test_lexmount_backend_cleans_client_and_fork_on_known_create_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

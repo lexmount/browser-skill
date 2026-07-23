@@ -134,12 +134,19 @@ def _mask_direct_url_secret(connect_url: str) -> str:
 def cmd_session_create(args: argparse.Namespace) -> None:
     command = "session.create"
     try:
+        session_kwargs: dict[str, Any] = {
+            "context_id": args.context_id,
+            "create_context": args.create_context,
+            "context_mode": args.context_mode,
+            "browser_mode": args.browser_mode,
+            "metadata": args.metadata,
+        }
+        if args.enable_downloads:
+            session_kwargs["downloads"] = {"enabled": True}
+        if args.enable_recording:
+            session_kwargs["recording"] = {"persistent": True}
         result = LexmountBrowserAdmin().create_session(
-            context_id=args.context_id,
-            create_context=args.create_context,
-            context_mode=args.context_mode,
-            browser_mode=args.browser_mode,
-            metadata=args.metadata,
+            **session_kwargs,
         )
     except Exception as exc:
         _failure_from_exception(command, exc)
@@ -473,6 +480,16 @@ def _add_session_create_args(parser: argparse.ArgumentParser) -> None:
         "--browser-mode",
         default="normal",
         type=_normalize_browser_mode,
+    )
+    parser.add_argument(
+        "--enable-downloads",
+        action="store_true",
+        help="Create the session with persistent downloads storage enabled.",
+    )
+    parser.add_argument(
+        "--enable-recording",
+        action="store_true",
+        help="Create the session with persistent replay/recording storage enabled.",
     )
     parser.add_argument(
         "--metadata-json",

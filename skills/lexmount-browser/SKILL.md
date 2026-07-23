@@ -221,6 +221,8 @@ Session/context lifecycle:
 
 ```bash
 "$SKILL_DIR/scripts/lexmount-browser" session create
+"$SKILL_DIR/scripts/lexmount-browser" session create --enable-downloads
+"$SKILL_DIR/scripts/lexmount-browser" session create --enable-recording
 "$SKILL_DIR/scripts/lexmount-browser" session create --create-context
 "$SKILL_DIR/scripts/lexmount-browser" session create --context-id <context_id>
 "$SKILL_DIR/scripts/lexmount-browser" session list --status active
