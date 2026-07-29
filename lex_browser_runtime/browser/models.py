@@ -42,7 +42,6 @@ class CreateBrowserRequest(BaseModel):
         alias="lexmount_extension_ids",
     )
     proxy: dict[str, Any] | None = Field(default=None, alias="lexmount_proxy")
-    weak_lock: bool = Field(default=False, alias="lexmount_weak_lock")
     async_create: bool = Field(default=True, alias="lexmount_async_create")
     poll_interval_sec: float = Field(
         default=1.0,
